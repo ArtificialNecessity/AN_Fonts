@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using static StbTrueTypeSharp.Common;
 
 namespace StbTrueTypeSharp
@@ -86,7 +86,7 @@ namespace StbTrueTypeSharp
 				this.fontdicts = new Buf(FakePtr<byte>.Null, 0);
 				this.fdselect = new Buf(FakePtr<byte>.Null, 0);
 				this.cff = new Buf(new FakePtr<byte>(ptr, (int)cff), 512 * 1024 * 1024);
-				b = this.cff;
+				b = this.cff.Clone();
 				b.stbtt__buf_skip(2);
 				b.stbtt__buf_seek(b.stbtt__buf_get8());
 				b.stbtt__cff_get_index();
@@ -95,10 +95,10 @@ namespace StbTrueTypeSharp
 				b.stbtt__cff_get_index();
 				this.gsubrs = b.stbtt__cff_get_index();
 				topdict.stbtt__dict_get_ints(17, out charstrings);
-				topdict.stbtt__dict_get_ints(0x100 | 6, out cstype);
-				topdict.stbtt__dict_get_ints(0x100 | 36, out fdarrayoff);
-				topdict.stbtt__dict_get_ints(0x100 | 37, out fdselectoff);
-				this.subrs = Buf.stbtt__get_subrs(b, topdict);
+				topdict.stbtt__dict_get_ints_default(0x100 | 6, ref cstype);
+				topdict.stbtt__dict_get_ints_default(0x100 | 36, ref fdarrayoff);
+				topdict.stbtt__dict_get_ints_default(0x100 | 37, ref fdselectoff);
+				this.subrs = Buf.stbtt__get_subrs(b.Clone(), topdict);
 
 				if (cstype != 2)
 					return 0;
@@ -1697,6 +1697,34 @@ namespace StbTrueTypeSharp
 		public int stbtt_InitFont(byte[] data, int offset)
 		{
 			return stbtt_InitFont_internal(data, offset);
+		}
+
+		public int stbtt_GetUnitsPerEm()
+		{
+			return (int)ttUSHORT(this.data + this.head + 18);
+		}
+
+		/// <summary>
+		/// Returns the sCapHeight field from the OS/2 table (int16, font units).
+		/// sCapHeight was added in OS/2 version 2. Returns 0 if the OS/2 table
+		/// is missing or is version 0/1 (which don't contain sCapHeight).
+		/// </summary>
+		public int stbtt_GetCapHeight(out bool available)
+		{
+			var tab = (int)stbtt__find_table(this.data, (uint)this.fontstart, "OS/2");
+			if (tab == 0)
+			{
+				available = false;
+				return 0;
+			}
+			int version = ttUSHORT(this.data + tab); // OS/2 table version at offset 0
+			if (version < 2)
+			{
+				available = false;
+				return 0;
+			}
+			available = true;
+			return ttSHORT(this.data + tab + 88);
 		}
 	}
 }

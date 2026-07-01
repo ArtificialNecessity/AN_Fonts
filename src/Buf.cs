@@ -1,4 +1,4 @@
-﻿namespace StbTrueTypeSharp
+namespace StbTrueTypeSharp
 {
 	public class Buf
 	{
@@ -11,6 +11,13 @@
 			data = p;
 			this.size = (int)size;
 			cursor = 0;
+		}
+
+		public Buf Clone()
+		{
+			var clone = new Buf(data, (ulong)size);
+			clone.cursor = cursor;
+			return clone;
 		}
 
 		public byte stbtt__buf_get8()
@@ -140,11 +147,22 @@
 
 		public void stbtt__dict_get_ints(int key, out uint _out_)
 		{
-			var temp = new FakePtr<uint>(new uint[1]);
+			var operands = stbtt__dict_get(key);
+			if (operands.cursor < operands.size)
+				_out_ = operands.stbtt__cff_int();
+			else
+				_out_ = 0; // key not found — caller should pre-initialize defaults
+		}
 
-			stbtt__dict_get_ints(key, 1, temp);
-
-			_out_ = temp[0];
+		/// <summary>
+		/// Like stbtt__dict_get_ints but preserves the existing value if key is not found.
+		/// Matches C behavior where the variable is pre-initialized and only overwritten if found.
+		/// </summary>
+		public void stbtt__dict_get_ints_default(int key, ref uint _out_)
+		{
+			var operands = stbtt__dict_get(key);
+			if (operands.cursor < operands.size)
+				_out_ = operands.stbtt__cff_int();
 		}
 
 		public int stbtt__cff_index_count()
