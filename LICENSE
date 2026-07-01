@@ -1,0 +1,30 @@
+ArtificialNecessity.Fonts (AN_Fonts)
+
+Copyright (c) 2025-2026 David Jeske / Artificial Necessity. All rights reserved.
+
+This software is a derived work. Except for the upstream portions described
+below, all code, documentation, test fixtures, and other materials in this
+repository are the property of David Jeske / Artificial Necessity and may not be
+used, copied, modified, merged, published, distributed, sublicensed, or sold
+without prior written permission from the copyright holder.
+
+
+---------------------------------------------------------------------------
+Portions derived from SafeStbTrueTypeSharp and stb_truetype
+---------------------------------------------------------------------------
+
+AN_Fonts is a fork of SafeStbTrueTypeSharp, Roman Shapiro's (rds1983) fully
+memory-safe C# port of Sean Barrett's stb_truetype.h (version 1.24). Everything
+up to and including upstream commit 2f76ecb (2020-03-07) is upstream work. The
+original, freely-licensed code is available from its upstream repositories:
+
+    SafeStbTrueTypeSharp:  https://github.com/StbSharp/SafeStbTrueTypeSharp
+    stb_truetype.h:        https://github.com/nothings/stb
+
+The portions of this software originating from SafeStbTrueTypeSharp are
+Copyright (c) Roman Shapiro and were released by their author into the public
+domain. stb_truetype.h is Copyright (c) 2017 Sean Barrett and is offered under
+the recipient's choice of the MIT License or the public domain (Unlicense), per
+the license block at the end of that file. Those terms continue to govern those
+portions. Anyone wishing to use the freely-licensed code without the Artificial
+Necessity additions should obtain it from the upstream repositories above.
