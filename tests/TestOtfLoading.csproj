@@ -8,5 +8,6 @@
   </ItemGroup>
   <ItemGroup>
     <None Update="Lato-Regular.otf" CopyToOutputDirectory="PreserveNewest" />
+    <None Update="debug_frutiger_roman.otf" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

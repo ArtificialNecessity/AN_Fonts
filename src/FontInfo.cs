@@ -909,9 +909,10 @@ namespace StbTrueTypeSharp
 								c.stbtt__csctx_rccurve_to(dx4, dy4, dx5, dy5, dx6, dy6);
 								break;
 							default:
-								return 0;
+								// Unknown/deprecated escape operators (e.g. dotsection 12 0) — treat as no-op
+								break;
 						}
-					}
+					} 
 					break;
 					default:
 						if (b0 != 255 && b0 != 28 && (b0 < 32 || b0 > 254))
