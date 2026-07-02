@@ -188,8 +188,6 @@ namespace StbTrueTypeSharp
 
 		public static Buf stbtt__get_subrs(Buf cff, Buf fontdict)
 		{
-			var subrsoff = (uint)0;
-
 			var private_loc = new uint[2];
 			private_loc[0] = 0;
 			private_loc[1] = 0;
@@ -198,7 +196,9 @@ namespace StbTrueTypeSharp
 			if (private_loc[1] == 0 || private_loc[0] == 0)
 				return new Buf(FakePtr<byte>.Null, 0);
 			var pdict = cff.stbtt__buf_range((int)private_loc[1], (int)private_loc[0]);
-			pdict.stbtt__dict_get_ints(19, 1, new FakePtr<uint>(subrsoff));
+			var subrsoff_arr = new uint[1];
+			pdict.stbtt__dict_get_ints(19, 1, new FakePtr<uint>(subrsoff_arr));
+			var subrsoff = subrsoff_arr[0];
 			if (subrsoff == 0)
 				return new Buf(FakePtr<byte>.Null, 0);
 			cff.stbtt__buf_seek((int)(private_loc[1] + subrsoff));
