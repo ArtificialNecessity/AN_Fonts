@@ -383,7 +383,9 @@ namespace StbTrueTypeSharp
 				break;
 			}
 
-			return -1;
+			// OpenType spec: any glyph not listed in the ClassDef is class 0
+			// (was: -1, which silently dropped class-0 kern pairs, e.g. Roboto quotes)
+			return 0;
 		}
 
 		public static stbtt__active_edge stbtt__new_active(stbtt__edge e, int off_x, float start_point)

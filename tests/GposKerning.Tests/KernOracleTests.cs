@@ -91,7 +91,7 @@ public class KernOracleTests
             buffer.Direction = Direction.LeftToRight;
             buffer.Script = Script.Latin;
             buffer.Language = new Language("en");
-            buffer.AddUtf16(stackalloc char[] { c1, c2 }); // sets ContentType=Unicode
+            buffer.AddUtf16(new string(new[] { c1, c2 })); // sets ContentType=Unicode
             hbFont.Shape(buffer, PinnedFeatures);
 
             var infos = buffer.GlyphInfos;

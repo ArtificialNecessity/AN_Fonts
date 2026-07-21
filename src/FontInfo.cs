@@ -1065,129 +1065,219 @@ namespace StbTrueTypeSharp
 
 		public int stbtt__GetGlyphGPOSInfoAdvance(int glyph1, int glyph2)
 		{
-			ushort lookupListOffset = 0;
-			FakePtr<byte> lookupList;
-			ushort lookupCount = 0;
-			FakePtr<byte> data;
-			var i = 0;
-			if (this.gpos == 0)
+			var kernLookups = stbtt__ResolveGposKernLookups();
+			if (kernLookups == null)
 				return 0;
-			data = this.data + this.gpos;
-			if (ttUSHORT(data + 0) != 1)
-				return 0;
-			if (ttUSHORT(data + 2) != 0)
-				return 0;
-			lookupListOffset = ttUSHORT(data + 8);
-			lookupList = data + lookupListOffset;
-			lookupCount = ttUSHORT(lookupList);
-			for (i = 0; i < lookupCount; ++i)
+			var gposData = this.data + this.gpos;
+			var lookupList = gposData + ttUSHORT(gposData + 8);
+			var totalAdvance = 0;
+			for (var i = 0; i < kernLookups.Length; ++i)
 			{
-				var lookupOffset = ttUSHORT(lookupList + 2 + 2 * i);
-				var lookupTable = lookupList + lookupOffset;
-				var lookupType = ttUSHORT(lookupTable);
-				var subTableCount = ttUSHORT(lookupTable + 4);
-				var subTableOffsets = lookupTable + 6;
-				switch (lookupType)
-				{
-					case 2:
-					{
-						var sti = 0;
-						for (sti = 0; sti < subTableCount; sti++)
-						{
-							var subtableOffset = ttUSHORT(subTableOffsets + 2 * sti);
-							var table = lookupTable + subtableOffset;
-							var posFormat = ttUSHORT(table);
-							var coverageOffset = ttUSHORT(table + 2);
-							var coverageIndex = stbtt__GetCoverageIndex(table + coverageOffset, glyph1);
-							if (coverageIndex == -1)
-								continue;
-							switch (posFormat)
-							{
-								case 1:
-								{
-									var l = 0;
-									var r = 0;
-									var m = 0;
-									var straw = 0;
-									var needle = 0;
-									var valueFormat1 = ttUSHORT(table + 4);
-									var valueFormat2 = ttUSHORT(table + 6);
-									var valueRecordPairSizeInBytes = 2;
-									var pairSetCount = ttUSHORT(table + 8);
-									var pairPosOffset = ttUSHORT(table + 10 + 2 * coverageIndex);
-									var pairValueTable = table + pairPosOffset;
-									var pairValueCount = ttUSHORT(pairValueTable);
-									var pairValueArray = pairValueTable + 2;
-									if (valueFormat1 != 4)
-										return 0;
-									if (valueFormat2 != 0)
-										return 0;
-									needle = glyph2;
-									r = pairValueCount - 1;
-									l = 0;
-									while (l <= r)
-									{
-										ushort secondGlyph = 0;
-										FakePtr<byte> pairValue;
-										m = (l + r) >> 1;
-										pairValue = pairValueArray + (2 + valueRecordPairSizeInBytes) * m;
-										secondGlyph = ttUSHORT(pairValue);
-										straw = secondGlyph;
-										if (needle < straw)
-										{
-											r = m - 1;
-										}
-										else if (needle > straw)
-										{
-											l = m + 1;
-										}
-										else
-										{
-											var xAdvance = ttSHORT(pairValue + 2);
-											return xAdvance;
-										}
-									}
-								}
-								break;
-								case 2:
-								{
-									var valueFormat1 = ttUSHORT(table + 4);
-									var valueFormat2 = ttUSHORT(table + 6);
-									var classDef1Offset = ttUSHORT(table + 8);
-									var classDef2Offset = ttUSHORT(table + 10);
-									var glyph1class = stbtt__GetGlyphClass(table + classDef1Offset, glyph1);
-									var glyph2class = stbtt__GetGlyphClass(table + classDef2Offset, glyph2);
-									var class1Count = ttUSHORT(table + 12);
-									var class2Count = ttUSHORT(table + 14);
-									if (valueFormat1 != 4)
-										return 0;
-									if (valueFormat2 != 0)
-										return 0;
-									if (glyph1class >= 0 && glyph1class < class1Count && glyph2class >= 0 &&
-										glyph2class < class2Count)
-									{
-										var class1Records = table + 16;
-										var class2Records = class1Records + 2 * glyph1class * class2Count;
-										var xAdvance = ttSHORT(class2Records + 2 * glyph2class);
-										return xAdvance;
-									}
-								}
-								break;
-							}
-						}
+				if (!kernLookups[i])
+					continue;
+				var lookupTable = lookupList + ttUSHORT(lookupList + 2 + 2 * i);
+				totalAdvance += stbtt__GPOSLookupPairAdvance(lookupTable, glyph1, glyph2);
+			}
 
-						break;
+			return totalAdvance;
+		}
+
+		// Cached result of stbtt__ResolveGposKernLookups (resolved once per font).
+		private bool[] gposKernLookups;
+		private bool gposKernResolved;
+
+		// Resolves latn/DFLT default-LangSys 'kern' feature lookups ONCE per font.
+		// Returns null when GPOS has no usable kern feature for latn/DFLT — callers
+		// (stbtt_GetGlyphKernAdvance) then fall back to the legacy 'kern' table.
+		private bool[] stbtt__ResolveGposKernLookups()
+		{
+			if (this.gposKernResolved)
+				return this.gposKernLookups;
+			this.gposKernResolved = true;
+			if (this.gpos == 0)
+				return null;
+			var data = this.data + this.gpos;
+			if (ttUSHORT(data + 0) != 1)
+				return null;
+			if (ttUSHORT(data + 2) != 0)
+				return null;
+			var scriptList = data + ttUSHORT(data + 4);
+			var featureList = data + ttUSHORT(data + 6);
+			var lookupList = data + ttUSHORT(data + 8);
+			var lookupCount = (int)ttUSHORT(lookupList);
+
+			// Script selection: prefer 'latn', fall back to 'DFLT'; use the default LangSys.
+			var scriptTable = FakePtr<byte>.Null;
+			var dfltScriptTable = FakePtr<byte>.Null;
+			var scriptCount = (int)ttUSHORT(scriptList);
+			for (var si = 0; si < scriptCount; ++si)
+			{
+				var rec = scriptList + 2 + 6 * si;
+				if (rec[0] == 'l' && rec[1] == 'a' && rec[2] == 't' && rec[3] == 'n')
+					scriptTable = scriptList + ttUSHORT(rec + 4);
+				else if (rec[0] == 'D' && rec[1] == 'F' && rec[2] == 'L' && rec[3] == 'T')
+					dfltScriptTable = scriptList + ttUSHORT(rec + 4);
+			}
+
+			if (scriptTable.IsNull)
+				scriptTable = dfltScriptTable;
+			if (scriptTable.IsNull)
+				return null;
+			var defaultLangSysOffset = ttUSHORT(scriptTable);
+			if (defaultLangSysOffset == 0)
+				return null;
+			var langSys = scriptTable + defaultLangSysOffset;
+
+			// Feature selection: mark the lookups of every 'kern' feature in the LangSys,
+			// then apply marked lookups in LookupList INDEX order (OpenType application
+			// order), accumulating adjustments ACROSS lookups.
+			var kernLookups = new bool[lookupCount];
+			var anyKern = false;
+			var featureIndexCount = (int)ttUSHORT(langSys + 4);
+			for (var fi = 0; fi < featureIndexCount; ++fi)
+			{
+				var featureIndex = ttUSHORT(langSys + 6 + 2 * fi);
+				var featureRec = featureList + 2 + 6 * featureIndex;
+				if (featureRec[0] != 'k' || featureRec[1] != 'e' || featureRec[2] != 'r' || featureRec[3] != 'n')
+					continue;
+				var featureTable = featureList + ttUSHORT(featureRec + 4);
+				var featureLookupCount = (int)ttUSHORT(featureTable + 2);
+				for (var li = 0; li < featureLookupCount; ++li)
+				{
+					int lookupIndex = ttUSHORT(featureTable + 4 + 2 * li);
+					if (lookupIndex < lookupCount)
+					{
+						kernLookups[lookupIndex] = true;
+						anyKern = true;
 					}
 				}
+			}
+
+			if (!anyKern)
+				return null;
+
+			this.gposKernLookups = kernLookups;
+			return kernLookups;
+		}
+
+		// Applies one GPOS lookup (type 2 PairAdjustment, incl. type 9 Extension wrapping)
+		// to the glyph pair. Within a lookup, the FIRST subtable that applies wins.
+		// LookupFlags are deliberately ignored: for base-glyph pair kerning the only flag
+		// seen in target fonts is IgnoreMarks (0x0008), a no-op when neither glyph is a mark.
+		private int stbtt__GPOSLookupPairAdvance(FakePtr<byte> lookupTable, int glyph1, int glyph2)
+		{
+			var lookupType = (int)ttUSHORT(lookupTable);
+			var subTableCount = (int)ttUSHORT(lookupTable + 4);
+			var subTableOffsets = lookupTable + 6;
+			if (lookupType != 2 && lookupType != 9)
+				return 0;
+
+			for (var sti = 0; sti < subTableCount; sti++)
+			{
+				var table = lookupTable + ttUSHORT(subTableOffsets + 2 * sti);
+				if (lookupType == 9)
+				{
+					// Extension positioning: format(u16), extensionLookupType(u16), extensionOffset(u32)
+					if (ttUSHORT(table) != 1)
+						continue;
+					if (ttUSHORT(table + 2) != 2)
+						continue; // inner lookup is not PairAdjustment
+					table = table + (int)ttULONG(table + 4);
+				}
+
+				int xAdvance;
+				if (stbtt__GPOSPairSubtableApply(table, glyph1, glyph2, out xAdvance))
+					return xAdvance; // first applying subtable ends the lookup
 			}
 
 			return 0;
 		}
 
+		// One PairPos subtable (format 1 or 2). Returns true if the subtable APPLIED
+		// (per HarfBuzz semantics: fmt1 = pair record found; fmt2 = coverage + valid classes,
+		// even when the adjustment value is 0). xAdvance is in unscaled font units.
+		public static bool stbtt__GPOSPairSubtableApply(FakePtr<byte> table, int glyph1, int glyph2, out int xAdvance)
+		{
+			xAdvance = 0;
+			var posFormat = (int)ttUSHORT(table);
+			var coverageIndex = stbtt__GetCoverageIndex(table + ttUSHORT(table + 2), glyph1);
+			if (coverageIndex == -1)
+				return false;
+
+			var valueFormat1 = (int)ttUSHORT(table + 4);
+			var valueFormat2 = (int)ttUSHORT(table + 6);
+			// ValueRecord layout: record size = 2 x popcount(valueFormat) bytes (device-table
+			// bits 0x0010-0x0080 each contribute a 2-byte offset field to the SIZE but are
+			// ignored for the value); xAdvance sits after the fields below bit 2
+			// (XPlacement, YPlacement), i.e. at byte offset 2 x popcount(valueFormat & 0x0003).
+			var valueRecordSize1 = 2 * stbtt__popcount(valueFormat1);
+			var valueRecordSize2 = 2 * stbtt__popcount(valueFormat2);
+			var hasXAdvance = (valueFormat1 & 4) != 0;
+			var xAdvanceOffset = 2 * stbtt__popcount(valueFormat1 & 3);
+
+			switch (posFormat)
+			{
+				case 1:
+				{
+					var pairValueTable = table + ttUSHORT(table + 10 + 2 * coverageIndex);
+					var pairValueCount = (int)ttUSHORT(pairValueTable);
+					var pairValueArray = pairValueTable + 2;
+					var stride = 2 + valueRecordSize1 + valueRecordSize2;
+					var l = 0;
+					var r = pairValueCount - 1;
+					while (l <= r)
+					{
+						var m = (l + r) >> 1;
+						var pairValue = pairValueArray + stride * m;
+						var straw = (int)ttUSHORT(pairValue);
+						if (glyph2 < straw)
+							r = m - 1;
+						else if (glyph2 > straw)
+							l = m + 1;
+						else
+						{
+							if (hasXAdvance)
+								xAdvance = ttSHORT(pairValue + 2 + xAdvanceOffset);
+							return true;
+						}
+					}
+
+					return false; // coverage hit but no pair record: NOT applied, try next subtable
+				}
+				case 2:
+				{
+					var glyph1class = stbtt__GetGlyphClass(table + ttUSHORT(table + 8), glyph1);
+					var glyph2class = stbtt__GetGlyphClass(table + ttUSHORT(table + 10), glyph2);
+					var class1Count = (int)ttUSHORT(table + 12);
+					var class2Count = (int)ttUSHORT(table + 14);
+					if (glyph1class < 0 || glyph1class >= class1Count || glyph2class < 0 || glyph2class >= class2Count)
+						return false; // malformed classes: treat as not applied
+					var recordSize = valueRecordSize1 + valueRecordSize2;
+					var record = table + 16 + (glyph1class * class2Count + glyph2class) * recordSize;
+					if (hasXAdvance)
+						xAdvance = ttSHORT(record + xAdvanceOffset);
+					return true; // fmt2 applies whenever classes resolve (even value 0)
+				}
+				default:
+					return false;
+			}
+		}
+
+		private static int stbtt__popcount(int v)
+		{
+			v = v - ((v >> 1) & 0x55555555);
+			v = (v & 0x33333333) + ((v >> 2) & 0x33333333);
+			return (((v + (v >> 4)) & 0x0F0F0F0F) * 0x01010101) >> 24;
+		}
+
 		public int stbtt_GetGlyphKernAdvance(int g1, int g2)
 		{
+			// GPOS pair kerning when the font exposes a latn/DFLT 'kern' feature;
+			// otherwise fall back to the legacy 'kern' table (also covers fonts whose
+			// GPOS exists but carries no kern feature, e.g. mark/mkmk-only GPOS).
+			// Font-level decision, never mixed per-pair.
 			var xAdvance = 0;
-			if (this.gpos != 0)
+			if (this.gpos != 0 && stbtt__ResolveGposKernLookups() != null)
 				xAdvance += stbtt__GetGlyphGPOSInfoAdvance(g1, g2);
 			else if (this.kern != 0)
 				xAdvance += stbtt__GetGlyphKernInfoAdvance(g1, g2);
