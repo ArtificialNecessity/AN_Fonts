@@ -4,7 +4,7 @@
     <TargetFramework>net9.0</TargetFramework>
   </PropertyGroup>
   <ItemGroup>
-    <ProjectReference Include="..\src\SafeStbTrueTypeSharp.csproj" />
+    <ProjectReference Include="..\..\src\SafeStbTrueTypeSharp.csproj" />
   </ItemGroup>
   <ItemGroup>
     <None Update="Lato-Regular.otf" CopyToOutputDirectory="PreserveNewest" />
