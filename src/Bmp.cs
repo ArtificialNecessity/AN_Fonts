@@ -3,6 +3,19 @@ using static StbTrueTypeSharp.Common;
 
 namespace StbTrueTypeSharp
 {
+	/// <summary>
+	/// Y-only grid-fit remap (SilkyNvg plans/crisp_text_yonly_gridfit_hinting.md):
+	/// a MONOTONIC mapping over y-UP pixel space (baseline = 0, ascenders positive,
+	/// i.e. fontUnitsY * scale_y BEFORE bitmap inversion). Applied to every
+	/// FLATTENED outline point right before edges are built, so a piecewise-linear
+	/// map is applied exactly — curves are already flattened to line segments and
+	/// there is no control-point-straddle distortion. x is never touched, so
+	/// x-subpixel phase shifts compose freely. The map MUST be monotonic
+	/// (non-decreasing): the bitmap-box variant relies on remapping only the two
+	/// box corners.
+	/// </summary>
+	public delegate float stbtt_YPixelGridFitRemap(float yUpPixel);
+
 	public class Bitmap
 	{
 		private interface IHolder<T>
@@ -345,9 +358,24 @@ namespace StbTrueTypeSharp
 		}
 
 		public void stbtt__rasterize(stbtt__point[] pts, int[] wcount, int windings,
-			float scale_x, float scale_y, float shift_x, float shift_y, int off_x, int off_y, int invert)
+			float scale_x, float scale_y, float shift_x, float shift_y, int off_x, int off_y, int invert,
+			stbtt_YPixelGridFitRemap y_remap = null)
 		{
 			var y_scale_inv = invert != 0 ? -scale_y : scale_y;
+			// Y-only grid-fit: remap operates in y-UP pixel space (p.y * scale_y),
+			// BEFORE the invert sign and shift_y are applied. Edge endpoints below
+			// consume p.y * y_scale_inv + shift_y; we pre-bake the remapped y back
+			// into the point in FONT-UNIT space so the existing edge math is
+			// untouched: p.y' = remap(p.y * scale_y) / scale_y.
+			if (y_remap != null && scale_y != 0)
+			{
+				var inv_scale_y = 1.0f / scale_y;
+				for (var pi = 0; pi < pts.Length; ++pi)
+				{
+					pts[pi].y = y_remap(pts[pi].y * scale_y) * inv_scale_y;
+				}
+			}
+
 			var n = 0;
 			var i = 0;
 			var j = 0;
@@ -395,7 +423,8 @@ namespace StbTrueTypeSharp
 		}
 
 		public void stbtt_Rasterize(float flatness_in_pixels, stbtt_vertex[] vertices,
-			int num_verts, float scale_x, float scale_y, float shift_x, float shift_y, int x_off, int y_off, int invert)
+			int num_verts, float scale_x, float scale_y, float shift_x, float shift_y, int x_off, int y_off, int invert,
+			stbtt_YPixelGridFitRemap y_remap = null)
 		{
 			var scale = scale_x > scale_y ? scale_y : scale_x;
 			var winding_count = 0;
@@ -404,7 +433,7 @@ namespace StbTrueTypeSharp
 				out winding_count);
 			if (windings != null)
 				stbtt__rasterize(windings, winding_lengths, winding_count, scale_x, scale_y, shift_x, shift_y,
-					x_off, y_off, invert);
+					x_off, y_off, invert, y_remap);
 		}
 	}
 }
