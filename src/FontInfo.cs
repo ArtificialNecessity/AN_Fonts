@@ -978,6 +978,70 @@ namespace StbTrueTypeSharp
 			return stbtt__GetGlyphShapeT2(glyph_index, out pvertices);
 		}
 
+		/// <summary>
+		/// Detects exactly-horizontal outline LINE segments of at least
+		/// min_length_font_units (SilkyNvg plans/crisp_text_yonly_gridfit_hinting.md
+		/// Phase 2 — stem-edge detection for y-only grid-fit). Returns edge count;
+		/// edge_ys are y positions in FONT UNITS (y-up), edge_is_top_of_ink is true
+		/// when the ink lies BELOW the edge (the edge is the upper boundary of a
+		/// bar). Ink side comes from segment direction: TrueType fills clockwise
+		/// (y-up), so a +x segment has ink below it; CFF/Type2 winds the opposite
+		/// way and is flipped accordingly. Curves are ignored — flat bar edges
+		/// (crossbars of H/e/t/f, arms of E) are straight lines in practice.
+		/// </summary>
+		public int stbtt_GetGlyphHorizontalLineEdges(int glyph_index, int min_length_font_units,
+			out float[] edge_ys, out bool[] edge_is_top_of_ink)
+		{
+			edge_ys = null;
+			edge_is_top_of_ink = null;
+			stbtt_vertex[] vertices;
+			var num_verts = stbtt_GetGlyphShape(glyph_index, out vertices);
+			if (num_verts <= 0)
+				return 0;
+
+			var is_cff = this.cff.size != 0;
+			var count = 0;
+			float[] ys = null;
+			bool[] tops = null;
+			float prev_x = 0;
+			float prev_y = 0;
+			for (var i = 0; i < num_verts; ++i)
+			{
+				var v = vertices[i];
+				if (v.type == STBTT_vline && v.y == prev_y && Math.Abs(v.x - prev_x) >= min_length_font_units)
+				{
+					// TrueType (CW, y-up): travelling +x means interior is below
+					// the segment -> upper boundary of ink. CFF (CCW): flipped.
+					var top_of_ink = v.x > prev_x;
+					if (is_cff)
+						top_of_ink = !top_of_ink;
+					if (ys == null)
+					{
+						ys = new float[8];
+						tops = new bool[8];
+					}
+					else if (count == ys.Length)
+					{
+						Array.Resize(ref ys, count * 2);
+						Array.Resize(ref tops, count * 2);
+					}
+					ys[count] = v.y;
+					tops[count] = top_of_ink;
+					++count;
+				}
+				prev_x = v.x;
+				prev_y = v.y;
+			}
+
+			if (count == 0)
+				return 0;
+			Array.Resize(ref ys, count);
+			Array.Resize(ref tops, count);
+			edge_ys = ys;
+			edge_is_top_of_ink = tops;
+			return count;
+		}
+
 		public void stbtt_GetGlyphHMetrics(int glyph_index, ref int advanceWidth,
 			ref int leftSideBearing)
 		{
@@ -1397,6 +1461,43 @@ namespace StbTrueTypeSharp
 			}
 		}
 
+		/// <summary>
+		/// stbtt_GetGlyphBitmapBoxSubpixel with a y-only grid-fit remap
+		/// (SilkyNvg plans/crisp_text_yonly_gridfit_hinting.md). The remap operates
+		/// in y-UP pixel space (baseline 0, ascenders positive) and MUST be
+		/// monotonic non-decreasing — only the two box corners are remapped here,
+		/// which bounds all remapped outline y values iff the map is monotonic.
+		/// x is untouched (identical to the unmapped box).
+		/// </summary>
+		public void stbtt_GetGlyphBitmapBoxSubpixelYRemap(int glyph, float scale_x, float scale_y,
+			float shift_x, float shift_y, stbtt_YPixelGridFitRemap y_remap,
+			ref int ix0, ref int iy0, ref int ix1, ref int iy1)
+		{
+			if (y_remap == null)
+			{
+				stbtt_GetGlyphBitmapBoxSubpixel(glyph, scale_x, scale_y, shift_x, shift_y, ref ix0, ref iy0, ref ix1, ref iy1);
+				return;
+			}
+			var x0 = 0;
+			var y0 = 0;
+			var x1 = 0;
+			var y1 = 0;
+			if (stbtt_GetGlyphBox(glyph, ref x0, ref y0, ref x1, ref y1) == 0)
+			{
+				ix0 = 0;
+				iy0 = 0;
+				ix1 = 0;
+				iy1 = 0;
+			}
+			else
+			{
+				ix0 = (int)Math.Floor(x0 * scale_x + shift_x);
+				iy0 = (int)Math.Floor(-y_remap(y1 * scale_y) + shift_y);
+				ix1 = (int)Math.Ceiling(x1 * scale_x + shift_x);
+				iy1 = (int)Math.Ceiling(-y_remap(y0 * scale_y) + shift_y);
+			}
+		}
+
 		public void stbtt_GetGlyphBitmapBox(int glyph, float scale_x, float scale_y,
 			ref int ix0, ref int iy0, ref int ix1, ref int iy1)
 		{
@@ -1480,6 +1581,36 @@ namespace StbTrueTypeSharp
 
 			if (gbm.w != 0 && gbm.h != 0)
 				gbm.stbtt_Rasterize(0.35f, vertices, num_verts, scale_x, scale_y, shift_x, shift_y, ix0, iy0, 1);
+		}
+
+		/// <summary>
+		/// stbtt_MakeGlyphBitmapSubpixel with a y-only grid-fit remap (SilkyNvg
+		/// plans/crisp_text_yonly_gridfit_hinting.md). The remap is applied to the
+		/// flattened outline in y-UP pixel space (see stbtt_YPixelGridFitRemap) and
+		/// to the bitmap-box corners, so the output origin matches
+		/// stbtt_GetGlyphBitmapBoxSubpixelYRemap. x (including shift_x subpixel
+		/// phase) is untouched.
+		/// </summary>
+		public void stbtt_MakeGlyphBitmapSubpixelYRemap(FakePtr<byte> output, int out_w,
+			int out_h, int out_stride, float scale_x, float scale_y, float shift_x, float shift_y, int glyph,
+			stbtt_YPixelGridFitRemap y_remap)
+		{
+			var ix0 = 0;
+			var iy0 = 0;
+			var ix1 = 0;
+			var iy1 = 0;
+			stbtt_vertex[] vertices;
+			var num_verts = stbtt_GetGlyphShape(glyph, out vertices);
+			var gbm = new Bitmap();
+			stbtt_GetGlyphBitmapBoxSubpixelYRemap(glyph, scale_x, scale_y, shift_x, shift_y, y_remap,
+				ref ix0, ref iy0, ref ix1, ref iy1);
+			gbm.pixels = output;
+			gbm.w = out_w;
+			gbm.h = out_h;
+			gbm.stride = out_stride;
+
+			if (gbm.w != 0 && gbm.h != 0)
+				gbm.stbtt_Rasterize(0.35f, vertices, num_verts, scale_x, scale_y, shift_x, shift_y, ix0, iy0, 1, y_remap);
 		}
 
 		public void stbtt_MakeGlyphBitmap(FakePtr<byte> output, int out_w, int out_h,
