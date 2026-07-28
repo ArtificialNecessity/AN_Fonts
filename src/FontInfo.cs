@@ -3,7 +3,7 @@ using static StbTrueTypeSharp.Common;
 
 namespace StbTrueTypeSharp
 {
-	public class FontInfo
+	public partial class FontInfo
 	{
 		public Buf cff = null;
 		public Buf charstrings = null;
