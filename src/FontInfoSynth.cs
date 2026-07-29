@@ -111,6 +111,22 @@ namespace StbTrueTypeSharp
 		private const float MiterLimit = 4f;
 
 		/// <summary>
+		/// LEGACY A/B SWITCH (default false = single-loop mode). The original A2
+		/// construction emitted a ±d loop PAIR per contour; the −d loop of a flesh
+		/// contour is region-theoretically redundant (it only cancels one layer over
+		/// the eroded interior) and is exactly the loop that SELF-CROSSES wherever
+		/// the local stroke width t &lt; 2d (script tails, thin connectors) — its
+		/// inverted lobes broke the cancellation and left 0-winding (uncovered)
+		/// patches INSIDE thin features (David's diagnosis, 2026-07-28: the
+		/// lightened Miama 'e' tail, identical on both tiers). Single-loop mode
+		/// offsets EVERY contour by −fillSign·d (away from ink), preserving source
+		/// orientation: flesh grows, holes shrink, one uniform formula; inward
+		/// loops never exist, and outward self-crossings at concave corners are
+		/// double-POSITIVE lobes — winding-safe under both nonzero and |signed|.
+		/// </summary>
+		public static bool EmboldenLoopPairLegacyMode = false;
+
+		/// <summary>
 		/// Applies the full synth transform IN PLACE (array may be reallocated):
 		///   1. embolden > 0: flatten each contour, build ±d offset rings with
 		///      miter/bevel joins, append as line contours. WINDING NORMALIZATION
@@ -216,18 +232,38 @@ namespace StbTrueTypeSharp
 			{
 				if (contour.Count < 3)
 					continue;
-				List<(float x, float y)> offsetOut = OffsetContour(contour, +halfWidth);
-				List<(float x, float y)> offsetIn = OffsetContour(contour, -halfWidth);
-				if (offsetOut.Count < 3 || offsetIn.Count < 3)
-					continue;
-				// Larger-|area| ring carries the flesh sign, smaller carries the
-				// opposite — the annulus adds ±w band ink, nets 0 inside.
-				float areaOut = Math.Abs(SignedArea(offsetOut));
-				float areaIn = Math.Abs(SignedArea(offsetIn));
-				List<(float x, float y)> larger = areaOut >= areaIn ? offsetOut : offsetIn;
-				List<(float x, float y)> smaller = areaOut >= areaIn ? offsetIn : offsetOut;
-				EmitRing(ringVerts, larger, fillSign);
-				EmitRing(ringVerts, smaller, -fillSign);
+				if (!EmboldenLoopPairLegacyMode)
+				{
+					// SINGLE-LOOP MODE (default; see EmboldenLoopPairLegacyMode doc):
+					// offset AWAY FROM INK by d, preserving source orientation.
+					// Uniform for flesh AND holes: away-from-ink = −fillSign·d
+					// (left normal is the interior side for CCW traversal; the
+					// algebra collapses both cases to one formula).
+					List<(float x, float y)> awayFromInk = OffsetContour(contour, -fillSign * halfWidth);
+					if (awayFromInk.Count < 3)
+						continue;
+					// Preserve traversal orientation EXACTLY (OffsetContour is
+					// order-preserving): a collapse-inverted hole loop keeps its
+					// inverted sense, which is what makes collapsed counters
+					// SATURATE solid rather than re-punch a tiny hole.
+					float emittedSign = SignedArea(awayFromInk) >= 0f ? 1f : -1f;
+					EmitRing(ringVerts, awayFromInk, emittedSign);
+				}
+				else
+				{
+					List<(float x, float y)> offsetOut = OffsetContour(contour, +halfWidth);
+					List<(float x, float y)> offsetIn = OffsetContour(contour, -halfWidth);
+					if (offsetOut.Count < 3 || offsetIn.Count < 3)
+						continue;
+					// Larger-|area| ring carries the flesh sign, smaller carries the
+					// opposite — the annulus adds ±w band ink, nets 0 inside.
+					float areaOut = Math.Abs(SignedArea(offsetOut));
+					float areaIn = Math.Abs(SignedArea(offsetIn));
+					List<(float x, float y)> larger = areaOut >= areaIn ? offsetOut : offsetIn;
+					List<(float x, float y)> smaller = areaOut >= areaIn ? offsetIn : offsetOut;
+					EmitRing(ringVerts, larger, fillSign);
+					EmitRing(ringVerts, smaller, -fillSign);
+				}
 			}
 
 			if (ringVerts.Count == 0)
