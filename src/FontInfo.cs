@@ -1368,15 +1368,37 @@ namespace StbTrueTypeSharp
 			lineGap = ttSHORT(this.data + this.hhea + 8);
 		}
 
+		/// <summary>Reads the complete vertical metric selection data from OS/2 version 0 or later.</summary>
+		public bool stbtt_GetOs2VerticalMetrics(out Os2VerticalMetrics metrics)
+		{
+			var tab = (int)stbtt__find_table(this.data, (uint)this.fontstart, "OS/2");
+			// Every OS/2 version contains fields through usWinDescent at byte 77.
+			// Validate the backing data before reading malformed/truncated font input.
+			if (tab == 0 || tab < 0 || tab > this.data.RemainingLength - 78)
+			{
+				metrics = default;
+				return false;
+			}
+
+			metrics = new Os2VerticalMetrics(
+				ttUSHORT(this.data + tab),
+				ttUSHORT(this.data + tab + 62),
+				ttSHORT(this.data + tab + 68),
+				ttSHORT(this.data + tab + 70),
+				ttSHORT(this.data + tab + 72),
+				ttUSHORT(this.data + tab + 74),
+				ttUSHORT(this.data + tab + 76));
+			return true;
+		}
+
 		public int stbtt_GetFontVMetricsOS2(ref int typoAscent, ref int typoDescent,
 			ref int typoLineGap)
 		{
-			var tab = (int)stbtt__find_table(this.data, (uint)this.fontstart, "OS/2");
-			if (tab == 0)
+			if (!stbtt_GetOs2VerticalMetrics(out Os2VerticalMetrics metrics))
 				return 0;
-			typoAscent = ttSHORT(this.data + tab + 68);
-			typoDescent = ttSHORT(this.data + tab + 70);
-			typoLineGap = ttSHORT(this.data + tab + 72);
+			typoAscent = metrics.TypographicAscent;
+			typoDescent = metrics.TypographicDescent;
+			typoLineGap = metrics.TypographicLineGap;
 			return 1;
 		}
 
