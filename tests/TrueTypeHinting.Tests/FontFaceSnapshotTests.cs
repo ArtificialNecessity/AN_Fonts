@@ -28,10 +28,10 @@ namespace TrueTypeHinting.Tests
                 out var trueTypeRawGlyphData, out var trueTypeRawGlyphDataFailure), trueTypeRawGlyphDataFailure.ToString());
             Assert.True(trueTypeRawGlyphData.ByteLength >= 0);
 
-            TrueTypeYHintingResult trueTypeYHintingResult = trueTypeYHintingEngine.HintGlyph(
-                trueTypeHintingFontFace, new DevicePpemY(14), new TrueTypeGlyphIndex(0));
-            Assert.False(trueTypeYHintingResult.Succeeded);
-            Assert.Equal(TrueTypeHintingFailureCode.InterpreterNotImplemented, trueTypeYHintingResult.Failure.FailureCode);
+            var sizeInstanceResult = trueTypeYHintingEngine.CreateSizeInstance(trueTypeHintingFontFace, new DevicePpemY(14));
+            Assert.True(sizeInstanceResult.Succeeded, sizeInstanceResult.Failure.ToString());
+            TrueTypeYHintingResult trueTypeYHintingResult = trueTypeYHintingEngine.HintGlyph(sizeInstanceResult.SizeInstance, new TrueTypeGlyphIndex(0));
+            Assert.True(trueTypeYHintingResult.Succeeded, trueTypeYHintingResult.Failure.ToString());
         }
 
         [Fact]

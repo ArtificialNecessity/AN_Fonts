@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using StbTrueTypeSharp.TrueTypeHinting.Geometry;
 
 namespace StbTrueTypeSharp.TrueTypeHinting.VirtualMachine
 {
@@ -43,6 +44,11 @@ namespace StbTrueTypeSharp.TrueTypeHinting.VirtualMachine
 
         internal TrueTypeVirtualMachineResult Execute(byte[] trueTypeInstructionBytes,
             TrueTypeVirtualMachineState trueTypeVirtualMachineState)
+            => Execute(trueTypeInstructionBytes, trueTypeVirtualMachineState, null);
+
+        internal TrueTypeVirtualMachineResult Execute(byte[] trueTypeInstructionBytes,
+            TrueTypeVirtualMachineState trueTypeVirtualMachineState,
+            TrueTypeHintingExecutionZones trueTypeHintingExecutionZones)
         {
             if (trueTypeVirtualMachineState == null) throw new ArgumentNullException(nameof(trueTypeVirtualMachineState));
             if (!TrueTypeInstructionStream.TryValidateConditionalStructure(trueTypeInstructionBytes,
@@ -50,7 +56,8 @@ namespace StbTrueTypeSharp.TrueTypeHinting.VirtualMachine
                 return new TrueTypeVirtualMachineResult(false, new TrueTypeOperandValue[0],
                     trueTypeValidationFailure, 0, trueTypeVirtualMachineState);
 
-            var trueTypeExecutionContext = new TrueTypeExecutionContext(_trueTypeExecutionLimits, trueTypeVirtualMachineState);
+            var trueTypeExecutionContext = new TrueTypeExecutionContext(_trueTypeExecutionLimits,
+                trueTypeVirtualMachineState, trueTypeHintingExecutionZones);
             if (!ExecuteProgram(trueTypeInstructionBytes, trueTypeExecutionContext, out TrueTypeVirtualMachineFailure trueTypeProgramFailure))
                 return Failed(trueTypeProgramFailure, trueTypeExecutionContext);
             return new TrueTypeVirtualMachineResult(true, SnapshotStack(trueTypeExecutionContext.OperandStack),
@@ -95,6 +102,10 @@ namespace StbTrueTypeSharp.TrueTypeHinting.VirtualMachine
                 return PushBytes(trueTypeInstructionStream, trueTypeOperandStack, trueTypeOpcodeByte - 0xAF, out trueTypeProgramFailure);
             if (trueTypeOpcodeByte >= 0xB8 && trueTypeOpcodeByte <= 0xBF)
                 return PushWords(trueTypeInstructionStream, trueTypeOperandStack, trueTypeOpcodeByte - 0xB7, out trueTypeProgramFailure);
+            if (trueTypeOpcodeByte >= 0xC0 && trueTypeOpcodeByte <= 0xDF)
+                return ExecuteMoveDirectRelativePoint(trueTypeOpcodeByte, trueTypeExecutionContext, out trueTypeProgramFailure);
+            if (trueTypeOpcodeByte >= 0xE0)
+                return ExecuteMoveIndirectRelativePoint(trueTypeOpcodeByte, trueTypeExecutionContext, out trueTypeProgramFailure);
 
             switch ((TrueTypeInstructionOpcode)trueTypeOpcodeByte)
             {
@@ -152,6 +163,31 @@ namespace StbTrueTypeSharp.TrueTypeHinting.VirtualMachine
                 case TrueTypeInstructionOpcode.ScanControl: return PopReferencePoint(trueTypeOperandStack, value => trueTypeGraphicsState.ScanControlFlags = value & 0xFFFF, out trueTypeProgramFailure);
                 case TrueTypeInstructionOpcode.ScanType: return PopReferencePoint(trueTypeOperandStack, value => trueTypeGraphicsState.ScanType = value, out trueTypeProgramFailure);
                 case TrueTypeInstructionOpcode.InstructionControl: return ExecuteInstructionControl(trueTypeOperandStack, trueTypeGraphicsState, out trueTypeProgramFailure);
+                case TrueTypeInstructionOpcode.MoveDirectAbsolutePointWithoutRounding: return ExecuteMoveDirectAbsolutePoint(false, trueTypeExecutionContext, out trueTypeProgramFailure);
+                case TrueTypeInstructionOpcode.MoveDirectAbsolutePointWithRounding: return ExecuteMoveDirectAbsolutePoint(true, trueTypeExecutionContext, out trueTypeProgramFailure);
+                case TrueTypeInstructionOpcode.MoveIndirectAbsolutePointWithoutRounding: return ExecuteMoveIndirectAbsolutePoint(false, trueTypeExecutionContext, out trueTypeProgramFailure);
+                case TrueTypeInstructionOpcode.MoveIndirectAbsolutePointWithRounding: return ExecuteMoveIndirectAbsolutePoint(true, trueTypeExecutionContext, out trueTypeProgramFailure);
+                case TrueTypeInstructionOpcode.MoveStackIndirectRelativePointKeepReference: return ExecuteMoveStackIndirectRelativePoint(false, trueTypeExecutionContext, out trueTypeProgramFailure);
+                case TrueTypeInstructionOpcode.MoveStackIndirectRelativePointSetReference: return ExecuteMoveStackIndirectRelativePoint(true, trueTypeExecutionContext, out trueTypeProgramFailure);
+                case TrueTypeInstructionOpcode.GetCurrentCoordinate: return ExecuteGetCoordinate(false, trueTypeExecutionContext, out trueTypeProgramFailure);
+                case TrueTypeInstructionOpcode.GetOriginalCoordinate: return ExecuteGetCoordinate(true, trueTypeExecutionContext, out trueTypeProgramFailure);
+                case TrueTypeInstructionOpcode.SetCoordinateFromStack: return ExecuteSetCoordinateFromStack(trueTypeExecutionContext, out trueTypeProgramFailure);
+                case TrueTypeInstructionOpcode.MeasureDistanceCurrent: return ExecuteMeasureDistance(false, trueTypeExecutionContext, out trueTypeProgramFailure);
+                case TrueTypeInstructionOpcode.MeasureDistanceOriginal: return ExecuteMeasureDistance(true, trueTypeExecutionContext, out trueTypeProgramFailure);
+                case TrueTypeInstructionOpcode.InterpolateUntouchedPointsYAxis:
+                    if (!TryRequireExecutionZones(trueTypeExecutionContext, out trueTypeProgramFailure)) return false;
+                    TrueTypeHintingGeometryOperations.InterpolateUntouchedPoints(trueTypeExecutionContext.ExecutionZones.GlyphZone, true); break;
+                case TrueTypeInstructionOpcode.InterpolateUntouchedPointsXAxis:
+                    if (!TryRequireExecutionZones(trueTypeExecutionContext, out trueTypeProgramFailure)) return false;
+                    TrueTypeHintingGeometryOperations.InterpolateUntouchedPoints(trueTypeExecutionContext.ExecutionZones.GlyphZone, false); break;
+                case TrueTypeInstructionOpcode.InterpolatePoints: return ExecuteInterpolatePoints(trueTypeExecutionContext, out trueTypeProgramFailure);
+                case TrueTypeInstructionOpcode.AlignRelativePoints: return ExecuteAlignRelativePoints(trueTypeExecutionContext, out trueTypeProgramFailure);
+                case TrueTypeInstructionOpcode.ShiftPointsUsingReferencePointTwo: return ExecuteShiftPoints(false, trueTypeExecutionContext, out trueTypeProgramFailure);
+                case TrueTypeInstructionOpcode.ShiftPointsUsingReferencePointOne: return ExecuteShiftPoints(true, trueTypeExecutionContext, out trueTypeProgramFailure);
+                case TrueTypeInstructionOpcode.ShiftPointsByPixelAmount: return ExecuteShiftPointsByPixelAmount(trueTypeExecutionContext, out trueTypeProgramFailure);
+                case TrueTypeInstructionOpcode.DeltaPointOne: return ExecuteDeltaPoints(trueTypeExecutionContext, 0, out trueTypeProgramFailure);
+                case TrueTypeInstructionOpcode.DeltaPointTwo: return ExecuteDeltaPoints(trueTypeExecutionContext, 16, out trueTypeProgramFailure);
+                case TrueTypeInstructionOpcode.DeltaPointThree: return ExecuteDeltaPoints(trueTypeExecutionContext, 32, out trueTypeProgramFailure);
                 case TrueTypeInstructionOpcode.FunctionDefinition: return DefineFunction(true, trueTypeInstructionStream, trueTypeExecutionContext, out trueTypeProgramFailure);
                 case TrueTypeInstructionOpcode.InstructionDefinition: return DefineFunction(false, trueTypeInstructionStream, trueTypeExecutionContext, out trueTypeProgramFailure);
                 case TrueTypeInstructionOpcode.EndFunction: trueTypeProgramFailure = Failure(TrueTypeVirtualMachineFailureCode.InvalidFunctionDefinition, "ENDF appeared outside a definition."); return false;
@@ -240,6 +276,67 @@ namespace StbTrueTypeSharp.TrueTypeHinting.VirtualMachine
             context.ActiveCallDepth++;
             try { return ExecuteProgram(body, context, out failure); }
             finally { context.ActiveCallDepth--; }
+        }
+
+        private static bool ExecuteMoveDirectAbsolutePoint(bool round, TrueTypeExecutionContext context,
+            out TrueTypeVirtualMachineFailure failure)
+            => TrueTypePointInstructionExecutor.ExecuteMoveDirectAbsolutePoint(round, context, out failure);
+
+        private static bool ExecuteMoveIndirectAbsolutePoint(bool round, TrueTypeExecutionContext context,
+            out TrueTypeVirtualMachineFailure failure)
+            => TrueTypePointInstructionExecutor.ExecuteMoveIndirectAbsolutePoint(round, context, out failure);
+
+        private static bool ExecuteMoveDirectRelativePoint(byte opcode, TrueTypeExecutionContext context,
+            out TrueTypeVirtualMachineFailure failure)
+            => TrueTypePointInstructionExecutor.ExecuteMoveDirectRelativePoint(opcode, context, out failure);
+
+        private static bool ExecuteMoveIndirectRelativePoint(byte opcode, TrueTypeExecutionContext context,
+            out TrueTypeVirtualMachineFailure failure)
+            => TrueTypePointInstructionExecutor.ExecuteMoveIndirectRelativePoint(opcode, context, out failure);
+
+        private static bool ExecuteMoveStackIndirectRelativePoint(bool setReferencePointZero,
+            TrueTypeExecutionContext context, out TrueTypeVirtualMachineFailure failure)
+            => TrueTypePointInstructionExecutor.ExecuteMoveStackIndirectRelativePoint(setReferencePointZero, context, out failure);
+
+        private static bool ExecuteGetCoordinate(bool original, TrueTypeExecutionContext context,
+            out TrueTypeVirtualMachineFailure failure)
+            => TrueTypePointInstructionExecutor.ExecuteGetCoordinate(original, context, out failure);
+
+        private static bool ExecuteSetCoordinateFromStack(TrueTypeExecutionContext context,
+            out TrueTypeVirtualMachineFailure failure)
+            => TrueTypePointInstructionExecutor.ExecuteSetCoordinateFromStack(context, out failure);
+
+        private static bool ExecuteMeasureDistance(bool original, TrueTypeExecutionContext context,
+            out TrueTypeVirtualMachineFailure failure)
+            => TrueTypePointInstructionExecutor.ExecuteMeasureDistance(original, context, out failure);
+
+        private static bool ExecuteInterpolatePoints(TrueTypeExecutionContext context,
+            out TrueTypeVirtualMachineFailure failure)
+            => TrueTypePointInstructionExecutor.ExecuteInterpolatePoints(context, out failure);
+
+        private static bool ExecuteAlignRelativePoints(TrueTypeExecutionContext context,
+            out TrueTypeVirtualMachineFailure failure)
+            => TrueTypePointInstructionExecutor.ExecuteAlignRelativePoints(context, out failure);
+
+        private static bool ExecuteShiftPoints(bool useReferencePointOne, TrueTypeExecutionContext context,
+            out TrueTypeVirtualMachineFailure failure)
+            => TrueTypePointInstructionExecutor.ExecuteShiftPoints(useReferencePointOne, context, out failure);
+
+        private static bool ExecuteShiftPointsByPixelAmount(TrueTypeExecutionContext context,
+            out TrueTypeVirtualMachineFailure failure)
+            => TrueTypePointInstructionExecutor.ExecuteShiftPointsByPixelAmount(context, out failure);
+
+        private static bool ExecuteDeltaPoints(TrueTypeExecutionContext context, int ppemBias,
+            out TrueTypeVirtualMachineFailure failure)
+            => TrueTypePointInstructionExecutor.ExecuteDeltaPoints(context, ppemBias, out failure);
+
+        private static bool TryRequireExecutionZones(TrueTypeExecutionContext context,
+            out TrueTypeVirtualMachineFailure failure)
+        {
+            if (context.ExecutionZones != null) { failure = default; return true; }
+            failure = Failure(TrueTypeVirtualMachineFailureCode.InvalidZonePointer,
+                "A point instruction was executed without TrueType point zones.");
+            return false;
         }
 
         private static bool WriteStorage(TrueTypeOperandStack stack, TrueTypeVirtualMachineState state, out TrueTypeVirtualMachineFailure failure)

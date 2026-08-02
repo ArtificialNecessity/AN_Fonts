@@ -7,15 +7,18 @@ namespace StbTrueTypeSharp.TrueTypeHinting.SizeInstance
     /// <summary>Prepared, ppem-specific TrueType VM state after fpgm and prep execution.</summary>
     public sealed class TrueTypeHintingSizeInstance
     {
-        internal TrueTypeHintingSizeInstance(DevicePpemY devicePpemY, TrueTypeVirtualMachineState virtualMachineState,
+        internal TrueTypeHintingSizeInstance(TrueTypeHintingFontFace trueTypeHintingFontFace,
+            DevicePpemY devicePpemY, TrueTypeVirtualMachineState virtualMachineState,
             int fontProgramInstructionCount, int controlValueProgramInstructionCount)
         {
+            TrueTypeHintingFontFace = trueTypeHintingFontFace ?? throw new ArgumentNullException(nameof(trueTypeHintingFontFace));
             DevicePpemY = devicePpemY;
             VirtualMachineState = virtualMachineState ?? throw new ArgumentNullException(nameof(virtualMachineState));
             FontProgramInstructionCount = fontProgramInstructionCount;
             ControlValueProgramInstructionCount = controlValueProgramInstructionCount;
         }
 
+        internal TrueTypeHintingFontFace TrueTypeHintingFontFace { get; }
         public DevicePpemY DevicePpemY { get; }
         public int FontProgramInstructionCount { get; }
         public int ControlValueProgramInstructionCount { get; }
