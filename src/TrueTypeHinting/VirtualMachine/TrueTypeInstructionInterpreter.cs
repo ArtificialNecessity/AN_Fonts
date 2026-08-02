@@ -69,9 +69,16 @@ namespace StbTrueTypeSharp.TrueTypeHinting.VirtualMachine
                         "The TrueType program exceeded its instruction-execution budget.");
                     return false;
                 }
+                int trueTypeOpcodeBytePosition = trueTypeInstructionStream.InstructionBytePosition;
                 if (!trueTypeInstructionStream.TryReadByte(out byte trueTypeOpcodeByte, out trueTypeProgramFailure) ||
                     !ExecuteOpcode(trueTypeOpcodeByte, trueTypeInstructionStream, trueTypeExecutionContext, out trueTypeProgramFailure))
+                {
+                    if (trueTypeProgramFailure.HasFailure)
+                        trueTypeProgramFailure = Failure(trueTypeProgramFailure.FailureCode,
+                            trueTypeProgramFailure.FailureMessage + " [opcode 0x" + trueTypeOpcodeByte.ToString("X2") +
+                            " at program byte " + trueTypeOpcodeBytePosition + "]");
                     return false;
+                }
             }
             trueTypeProgramFailure = default;
             return true;
@@ -123,12 +130,28 @@ namespace StbTrueTypeSharp.TrueTypeHinting.VirtualMachine
                 case TrueTypeInstructionOpcode.RoundOff: trueTypeGraphicsState.RoundingMode = TrueTypeRoundingMode.Off; break;
                 case TrueTypeInstructionOpcode.RoundUpToGrid: trueTypeGraphicsState.RoundingMode = TrueTypeRoundingMode.UpToGrid; break;
                 case TrueTypeInstructionOpcode.RoundDownToGrid: trueTypeGraphicsState.RoundingMode = TrueTypeRoundingMode.DownToGrid; break;
+                case TrueTypeInstructionOpcode.RoundGrayDistance:
+                case TrueTypeInstructionOpcode.RoundBlackDistance:
+                case TrueTypeInstructionOpcode.RoundWhiteDistance:
+                case TrueTypeInstructionOpcode.RoundReservedDistance: return ExecuteUnary(trueTypeOperandStack, value => RoundF26Dot6(value, trueTypeGraphicsState.RoundingMode), out trueTypeProgramFailure);
+                case TrueTypeInstructionOpcode.NoRoundGrayDistance:
+                case TrueTypeInstructionOpcode.NoRoundBlackDistance:
+                case TrueTypeInstructionOpcode.NoRoundWhiteDistance:
+                case TrueTypeInstructionOpcode.NoRoundReservedDistance: return ExecuteUnary(trueTypeOperandStack, value => value, out trueTypeProgramFailure);
                 case TrueTypeInstructionOpcode.SetMinimumDistance: return PopReferencePoint(trueTypeOperandStack, value => trueTypeGraphicsState.MinimumDistanceF26Dot6 = value, out trueTypeProgramFailure);
                 case TrueTypeInstructionOpcode.SetControlValueCutIn: return PopReferencePoint(trueTypeOperandStack, value => trueTypeGraphicsState.ControlValueCutInF26Dot6 = value, out trueTypeProgramFailure);
                 case TrueTypeInstructionOpcode.SetSingleWidthCutIn: return PopReferencePoint(trueTypeOperandStack, value => trueTypeGraphicsState.SingleWidthCutInF26Dot6 = value, out trueTypeProgramFailure);
                 case TrueTypeInstructionOpcode.SetSingleWidth: return PopReferencePoint(trueTypeOperandStack, value => trueTypeGraphicsState.SingleWidthValueF26Dot6 = value, out trueTypeProgramFailure);
+                case TrueTypeInstructionOpcode.SetDeltaBase: return PopReferencePoint(trueTypeOperandStack, value => trueTypeGraphicsState.DeltaBasePpem = value, out trueTypeProgramFailure);
+                case TrueTypeInstructionOpcode.SetDeltaShift: return PopReferencePoint(trueTypeOperandStack, value => trueTypeGraphicsState.DeltaShift = value, out trueTypeProgramFailure);
                 case TrueTypeInstructionOpcode.FlipOn: trueTypeGraphicsState.AutoFlip = true; break;
                 case TrueTypeInstructionOpcode.FlipOff: trueTypeGraphicsState.AutoFlip = false; break;
+                case TrueTypeInstructionOpcode.MeasurePixelsPerEm: return trueTypeOperandStack.TryPush(trueTypeVirtualMachineState.RasterizerEnvironment.DevicePpemY.Value, out trueTypeProgramFailure);
+                case TrueTypeInstructionOpcode.MeasurePointSize: return trueTypeOperandStack.TryPush(trueTypeVirtualMachineState.RasterizerEnvironment.PointSizeF26Dot6, out trueTypeProgramFailure);
+                case TrueTypeInstructionOpcode.GetInformation: return ExecuteGetInformation(trueTypeOperandStack, trueTypeVirtualMachineState.RasterizerEnvironment, out trueTypeProgramFailure);
+                case TrueTypeInstructionOpcode.ScanControl: return PopReferencePoint(trueTypeOperandStack, value => trueTypeGraphicsState.ScanControlFlags = value & 0xFFFF, out trueTypeProgramFailure);
+                case TrueTypeInstructionOpcode.ScanType: return PopReferencePoint(trueTypeOperandStack, value => trueTypeGraphicsState.ScanType = value, out trueTypeProgramFailure);
+                case TrueTypeInstructionOpcode.InstructionControl: return ExecuteInstructionControl(trueTypeOperandStack, trueTypeGraphicsState, out trueTypeProgramFailure);
                 case TrueTypeInstructionOpcode.FunctionDefinition: return DefineFunction(true, trueTypeInstructionStream, trueTypeExecutionContext, out trueTypeProgramFailure);
                 case TrueTypeInstructionOpcode.InstructionDefinition: return DefineFunction(false, trueTypeInstructionStream, trueTypeExecutionContext, out trueTypeProgramFailure);
                 case TrueTypeInstructionOpcode.EndFunction: trueTypeProgramFailure = Failure(TrueTypeVirtualMachineFailureCode.InvalidFunctionDefinition, "ENDF appeared outside a definition."); return false;
@@ -137,7 +160,11 @@ namespace StbTrueTypeSharp.TrueTypeHinting.VirtualMachine
                 case TrueTypeInstructionOpcode.WriteStorage: return WriteStorage(trueTypeOperandStack, trueTypeVirtualMachineState, out trueTypeProgramFailure);
                 case TrueTypeInstructionOpcode.ReadStorage: return ReadStorage(trueTypeOperandStack, trueTypeVirtualMachineState, out trueTypeProgramFailure);
                 case TrueTypeInstructionOpcode.WriteControlValuePixels: return WriteControlValue(trueTypeOperandStack, trueTypeVirtualMachineState, out trueTypeProgramFailure);
+                case TrueTypeInstructionOpcode.WriteControlValueFontUnits: return WriteControlValueFontUnits(trueTypeOperandStack, trueTypeVirtualMachineState, out trueTypeProgramFailure);
                 case TrueTypeInstructionOpcode.ReadControlValue: return ReadControlValue(trueTypeOperandStack, trueTypeVirtualMachineState, out trueTypeProgramFailure);
+                case TrueTypeInstructionOpcode.DeltaControlValueOne: return ExecuteDeltaControlValue(trueTypeOperandStack, trueTypeVirtualMachineState, 0, out trueTypeProgramFailure);
+                case TrueTypeInstructionOpcode.DeltaControlValueTwo: return ExecuteDeltaControlValue(trueTypeOperandStack, trueTypeVirtualMachineState, 16, out trueTypeProgramFailure);
+                case TrueTypeInstructionOpcode.DeltaControlValueThree: return ExecuteDeltaControlValue(trueTypeOperandStack, trueTypeVirtualMachineState, 32, out trueTypeProgramFailure);
                 case TrueTypeInstructionOpcode.PushBytesVariable: return ReadPushCountThenPush(false, trueTypeInstructionStream, trueTypeOperandStack, out trueTypeProgramFailure);
                 case TrueTypeInstructionOpcode.PushWordsVariable: return ReadPushCountThenPush(true, trueTypeInstructionStream, trueTypeOperandStack, out trueTypeProgramFailure);
                 case TrueTypeInstructionOpcode.Duplicate: if (!trueTypeOperandStack.TryPeekFromTop(0, out int duplicateValue, out trueTypeProgramFailure)) return false; return trueTypeOperandStack.TryPush(duplicateValue, out trueTypeProgramFailure);
@@ -193,8 +220,9 @@ namespace StbTrueTypeSharp.TrueTypeHinting.VirtualMachine
         private bool CallFunction(bool isLoopCall, TrueTypeExecutionContext context, out TrueTypeVirtualMachineFailure failure)
         {
             int callCount = 1;
-            if (isLoopCall && !context.OperandStack.TryPop(out callCount, out failure)) return false;
             if (!context.OperandStack.TryPop(out int functionIdentifier, out failure)) return false;
+            // LOOPCALL stack order is [..., repeatCount, functionIdentifier]; function is topmost.
+            if (isLoopCall && !context.OperandStack.TryPop(out callCount, out failure)) return false;
             if (callCount < 0) { failure = Failure(TrueTypeVirtualMachineFailureCode.InvalidFunctionDefinition, "LOOPCALL count is negative."); return false; }
             if (!context.VirtualMachineState.FunctionDefinitions.TryGetFunction(new TrueTypeFunctionIdentifier(functionIdentifier), out byte[] body, out failure)) return false;
             for (int callIndex = 0; callIndex < callCount; callIndex++)
@@ -233,6 +261,89 @@ namespace StbTrueTypeSharp.TrueTypeHinting.VirtualMachine
         {
             if (!stack.TryPop(out int index, out failure) || !state.TryReadControlValue(index, out int value, out failure)) return false;
             return stack.TryPush(value, out failure);
+        }
+
+        private static bool WriteControlValueFontUnits(TrueTypeOperandStack stack, TrueTypeVirtualMachineState state,
+            out TrueTypeVirtualMachineFailure failure)
+        {
+            if (!stack.TryPop(out int fontUnitValue, out failure) || !stack.TryPop(out int index, out failure)) return false;
+            return state.TryWriteControlValue(index, state.ScaleFontUnitsToF26Dot6(fontUnitValue), out failure);
+        }
+
+        private static bool ExecuteDeltaControlValue(TrueTypeOperandStack stack, TrueTypeVirtualMachineState state,
+            int deltaPpemBias, out TrueTypeVirtualMachineFailure failure)
+        {
+            if (!stack.TryPop(out int exceptionCount, out failure)) return false;
+            if (exceptionCount < 0 || exceptionCount > stack.OperandCount / 2)
+            {
+                failure = Failure(TrueTypeVirtualMachineFailureCode.OperandStackUnderflow,
+                    "The DELTAC exception count exceeds the available operand pairs.");
+                return false;
+            }
+            for (int exceptionIndex = 0; exceptionIndex < exceptionCount; exceptionIndex++)
+            {
+                if (!stack.TryPop(out int controlValueIndex, out failure) ||
+                    !stack.TryPop(out int packedDeltaArgument, out failure)) return false;
+                int targetPpem = ((packedDeltaArgument >> 4) & 0x0F) + state.GraphicsState.DeltaBasePpem + deltaPpemBias;
+                if (targetPpem != state.RasterizerEnvironment.DevicePpemY.Value) continue;
+                int deltaStep = (packedDeltaArgument & 0x0F) - 8;
+                if (deltaStep >= 0) deltaStep++;
+                int deltaF26Dot6 = deltaStep * (1 << Math.Max(0, 6 - state.GraphicsState.DeltaShift));
+                if (!state.TryReadControlValue(controlValueIndex, out int currentControlValue, out failure) ||
+                    !state.TryWriteControlValue(controlValueIndex, currentControlValue + deltaF26Dot6, out failure)) return false;
+            }
+            return Success(out failure);
+        }
+
+        private static bool ExecuteGetInformation(TrueTypeOperandStack stack, TrueTypeRasterizerEnvironment environment,
+            out TrueTypeVirtualMachineFailure failure)
+        {
+            if (!stack.TryPop(out int selector, out failure)) return false;
+            int result = 0;
+            // Modern DirectWrite (Windows 8+) reports Microsoft rasterizer v2.1 (40).
+            if ((selector & (1 << 0)) != 0) result = 40;
+            if ((selector & (1 << 1)) != 0 && environment.GlyphRotated) result |= 1 << 8;
+            if ((selector & (1 << 2)) != 0 && environment.GlyphStretched) result |= 1 << 9;
+            // This snapshot currently represents non-variable TrueType faces: selector bit 3 returns zero.
+            if ((selector & (1 << 6)) != 0 && environment.ClearTypeHintingEnabled) result |= 1 << 13;
+            if ((selector & (1 << 10)) != 0 && environment.SubpixelPositioningEnabled) result |= 1 << 17;
+            if ((selector & (1 << 11)) != 0 && environment.SymmetricSmoothingEnabled) result |= 1 << 18;
+            if ((selector & (1 << 12)) != 0 && environment.GrayscaleClearTypeEnabled) result |= 1 << 19;
+            return stack.TryPush(result, out failure);
+        }
+
+        private static bool ExecuteInstructionControl(TrueTypeOperandStack stack, TrueTypeGraphicsState state,
+            out TrueTypeVirtualMachineFailure failure)
+        {
+            if (!stack.TryPop(out int selector, out failure) || !stack.TryPop(out int value, out failure)) return false;
+            switch (selector)
+            {
+                case 1 when value == 0 || value == 1:
+                    state.InstructionControlFlags = value == 0 ? state.InstructionControlFlags & ~1 : state.InstructionControlFlags | 1;
+                    return Success(out failure);
+                case 2 when value == 0 || value == 2:
+                    state.InstructionControlFlags = value == 0 ? state.InstructionControlFlags & ~2 : state.InstructionControlFlags | 2;
+                    return Success(out failure);
+                case 3 when value == 0 || value == 4:
+                    state.InstructionControlFlags = value == 0 ? state.InstructionControlFlags & ~4 : state.InstructionControlFlags | 4;
+                    return Success(out failure);
+                default:
+                    failure = Failure(TrueTypeVirtualMachineFailureCode.InvalidFunctionDefinition,
+                        "INSTCTRL received an unsupported selector/value pair.");
+                    return false;
+            }
+        }
+
+        private static int RoundF26Dot6(int valueF26Dot6, TrueTypeRoundingMode roundingMode)
+        {
+            switch (roundingMode)
+            {
+                case TrueTypeRoundingMode.Off: return valueF26Dot6;
+                case TrueTypeRoundingMode.DownToGrid: return valueF26Dot6 >= 0 ? valueF26Dot6 & ~63 : -((-valueF26Dot6 + 63) & ~63);
+                case TrueTypeRoundingMode.UpToGrid: return valueF26Dot6 >= 0 ? (valueF26Dot6 + 63) & ~63 : -((-valueF26Dot6) & ~63);
+                case TrueTypeRoundingMode.ToHalfGrid: return valueF26Dot6 >= 0 ? ((valueF26Dot6 + 32) & ~63) + 32 : -(((-valueF26Dot6 + 32) & ~63) + 32);
+                default: return valueF26Dot6 >= 0 ? (valueF26Dot6 + 32) & ~63 : -((-valueF26Dot6 + 32) & ~63);
+            }
         }
 
         private static void SetBothVectors(TrueTypeGraphicsState state, TrueTypeUnitVector vector) { SetProjectionVector(state, vector); state.FreedomVector = vector; }

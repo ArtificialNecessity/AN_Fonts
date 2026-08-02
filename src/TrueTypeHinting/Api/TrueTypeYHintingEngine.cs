@@ -1,5 +1,6 @@
 using System;
 using StbTrueTypeSharp.TrueTypeHinting.FontFace;
+using StbTrueTypeSharp.TrueTypeHinting.SizeInstance;
 
 namespace StbTrueTypeSharp.TrueTypeHinting
 {
@@ -83,6 +84,11 @@ namespace StbTrueTypeSharp.TrueTypeHinting
             trueTypeHintingFontFaceFailure = default;
             return true;
         }
+
+        /// <summary>Scales the CVT and executes fpgm followed by prep for one vertical ppem.</summary>
+        public TrueTypeHintingSizeInstanceResult CreateSizeInstance(
+            TrueTypeHintingFontFace trueTypeHintingFontFace, DevicePpemY devicePpemY)
+            => TrueTypeHintingSizeInstanceFactory.Create(trueTypeHintingFontFace, devicePpemY);
 
         /// <summary>Placeholder until VM phases land; fails explicitly rather than silently ignoring instructions.</summary>
         public TrueTypeYHintingResult HintGlyph(TrueTypeHintingFontFace trueTypeHintingFontFace,
