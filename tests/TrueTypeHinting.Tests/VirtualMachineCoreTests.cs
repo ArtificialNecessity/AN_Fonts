@@ -119,7 +119,7 @@ namespace TrueTypeHinting.Tests
         [InlineData(new byte[] { (byte)TrueTypeInstructionOpcode.Add }, (int)TrueTypeVirtualMachineFailureCode.OperandStackUnderflow)]
         [InlineData(new byte[] { 0xB1, 64, 0, (byte)TrueTypeInstructionOpcode.Divide }, (int)TrueTypeVirtualMachineFailureCode.DivisionByZero)]
         [InlineData(new byte[] { 0xB0, 127, (byte)TrueTypeInstructionOpcode.JumpRelative }, (int)TrueTypeVirtualMachineFailureCode.InvalidJumpTarget)]
-        [InlineData(new byte[] { 0x00 }, (int)TrueTypeVirtualMachineFailureCode.UnsupportedOpcode)]
+        [InlineData(new byte[] { 0x83 }, (int)TrueTypeVirtualMachineFailureCode.UnsupportedOpcode)]
         public void InvalidProgramsReturnStructuredFailure(byte[] program, int expectedFailureCodeValue)
         {
             TrueTypeVirtualMachineResult result = Interpreter().Execute(program);
