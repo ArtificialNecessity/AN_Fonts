@@ -57,6 +57,60 @@ namespace StbTrueTypeSharp.TrueTypeHinting.VirtualMachine
         Super45,
     }
 
+    /// <summary>Decoded F26Dot6 period, phase, and threshold for SROUND or S45ROUND.</summary>
+    internal readonly struct TrueTypeSuperRoundingState
+    {
+        internal TrueTypeSuperRoundingState(int periodF26Dot6, int phaseF26Dot6, int thresholdF26Dot6)
+        {
+            PeriodF26Dot6 = periodF26Dot6;
+            PhaseF26Dot6 = phaseF26Dot6;
+            ThresholdF26Dot6 = thresholdF26Dot6;
+        }
+
+        internal int PeriodF26Dot6 { get; }
+        internal int PhaseF26Dot6 { get; }
+        internal int ThresholdF26Dot6 { get; }
+
+        internal static bool TryDecode(int encodedRoundingParameters, bool fortyFiveDegreeGrid,
+            out TrueTypeSuperRoundingState superRoundingState)
+        {
+            int gridPeriodF26Dot6 = fortyFiveDegreeGrid ? 45 : 64;
+            int periodSelector = (encodedRoundingParameters >> 6) & 3;
+            int periodF26Dot6;
+            switch (periodSelector)
+            {
+                case 0: periodF26Dot6 = gridPeriodF26Dot6 / 2; break;
+                case 1: periodF26Dot6 = gridPeriodF26Dot6; break;
+                case 2: periodF26Dot6 = gridPeriodF26Dot6 * 2; break;
+                default:
+                    superRoundingState = default;
+                    return false;
+            }
+
+            int phaseSelector = (encodedRoundingParameters >> 4) & 3;
+            int phaseF26Dot6 = phaseSelector * periodF26Dot6 / 4;
+            int thresholdSelector = encodedRoundingParameters & 15;
+            int thresholdF26Dot6 = thresholdSelector == 0
+                ? periodF26Dot6 - 1
+                : (thresholdSelector - 4) * periodF26Dot6 / 8;
+            superRoundingState = new TrueTypeSuperRoundingState(periodF26Dot6, phaseF26Dot6, thresholdF26Dot6);
+            return true;
+        }
+
+        internal static TrueTypeSuperRoundingState Default
+            => new TrueTypeSuperRoundingState(64, 0, 32);
+    }
+
+    internal static class TrueTypeDeltaState
+    {
+        internal static int DecodeDistanceF26Dot6(int packedDeltaArgument, int deltaShift)
+        {
+            int signedDeltaStep = (packedDeltaArgument & 0x0F) - 8;
+            if (signedDeltaStep >= 0) signedDeltaStep++;
+            return signedDeltaStep * (1 << (6 - deltaShift));
+        }
+    }
+
     /// <summary>Font/size graphics state; point-dependent fields are consumed by geometry phases.</summary>
     internal sealed class TrueTypeGraphicsState
     {
@@ -71,6 +125,7 @@ namespace StbTrueTypeSharp.TrueTypeHinting.VirtualMachine
         internal TrueTypeZonePointerIndex ZonePointerTwo { get; set; } = new TrueTypeZonePointerIndex(1);
         internal TrueTypeLoopCount LoopCount { get; set; } = new TrueTypeLoopCount(1);
         internal TrueTypeRoundingMode RoundingMode { get; set; } = TrueTypeRoundingMode.ToGrid;
+        internal TrueTypeSuperRoundingState SuperRoundingState { get; set; } = TrueTypeSuperRoundingState.Default;
         internal int MinimumDistanceF26Dot6 { get; set; } = 64;
         internal int ControlValueCutInF26Dot6 { get; set; } = 68;
         internal int SingleWidthCutInF26Dot6 { get; set; } = 0;
@@ -98,6 +153,7 @@ namespace StbTrueTypeSharp.TrueTypeHinting.VirtualMachine
                 ZonePointerTwo = new TrueTypeZonePointerIndex(1),
                 LoopCount = new TrueTypeLoopCount(1),
                 RoundingMode = RoundingMode,
+                SuperRoundingState = SuperRoundingState,
                 MinimumDistanceF26Dot6 = MinimumDistanceF26Dot6,
                 ControlValueCutInF26Dot6 = ControlValueCutInF26Dot6,
                 SingleWidthCutInF26Dot6 = SingleWidthCutInF26Dot6,

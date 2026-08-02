@@ -13,7 +13,7 @@ namespace StbTrueTypeSharp.TrueTypeHinting.Geometry
                 !TryPoint(context, context.VirtualMachineState.GraphicsState.ZonePointerZero, pointIndex, out TrueTypeHintingPoint point, out failure)) return false;
             TrueTypeGraphicsState state = context.VirtualMachineState.GraphicsState;
             int current = TrueTypeHintingGeometryOperations.ProjectCurrent(point, state.ProjectionVector);
-            int target = round ? TrueTypeHintingGeometryOperations.RoundF26Dot6(current, state.RoundingMode) : current;
+            int target = round ? TrueTypeHintingGeometryOperations.RoundF26Dot6(current, state) : current;
             if (!TrueTypeHintingGeometryOperations.TryMovePointByProjectedDistance(point, target - current, state, out failure)) return false;
             state.ReferencePointZero = state.ReferencePointOne = new TrueTypeReferencePointIndex(pointIndex);
             return Success(out failure);
@@ -37,7 +37,7 @@ namespace StbTrueTypeSharp.TrueTypeHinting.Geometry
             if (round)
             {
                 if (Math.Abs(controlValue - current) > state.ControlValueCutInF26Dot6) target = current;
-                target = TrueTypeHintingGeometryOperations.RoundF26Dot6(target, state.RoundingMode);
+                target = TrueTypeHintingGeometryOperations.RoundF26Dot6(target, state);
             }
             if (!TrueTypeHintingGeometryOperations.TryMovePointByProjectedDistance(point, target - current, state, out failure)) return false;
             state.ReferencePointZero = state.ReferencePointOne = new TrueTypeReferencePointIndex(pointIndex);
@@ -90,6 +90,128 @@ namespace StbTrueTypeSharp.TrueTypeHinting.Geometry
             state.ReferencePointTwo = new TrueTypeReferencePointIndex(pointIndex);
             if (setReferencePointZero) state.ReferencePointZero = new TrueTypeReferencePointIndex(pointIndex);
             return Success(out failure);
+        }
+
+        internal static bool ExecuteSetVectorToLine(bool setProjectionVector, bool setDualProjectionVector,
+            bool perpendicular, TrueTypeExecutionContext context, out TrueTypeVirtualMachineFailure failure)
+        {
+            if (!context.OperandStack.TryPop(out int firstPointIndex, out failure) ||
+                !context.OperandStack.TryPop(out int secondPointIndex, out failure)) return false;
+            TrueTypeGraphicsState state = context.VirtualMachineState.GraphicsState;
+            if (!TryPoint(context, state.ZonePointerTwo, firstPointIndex, out TrueTypeHintingPoint firstPoint, out failure) ||
+                !TryPoint(context, state.ZonePointerOne, secondPointIndex, out TrueTypeHintingPoint secondPoint, out failure) ||
+                !TrueTypeHintingGeometryOperations.TryCreateCurrentLineUnitVector(firstPoint, secondPoint, perpendicular,
+                    out TrueTypeUnitVector currentLineVector, out failure)) return false;
+
+            if (setDualProjectionVector)
+            {
+                if (!TrueTypeHintingGeometryOperations.TryCreateOriginalLineUnitVector(firstPoint, secondPoint, perpendicular,
+                        out TrueTypeUnitVector originalLineVector, out failure)) return false;
+                state.ProjectionVector = currentLineVector;
+                state.DualProjectionVector = originalLineVector;
+            }
+            else if (setProjectionVector)
+            {
+                state.ProjectionVector = currentLineVector;
+                state.DualProjectionVector = currentLineVector;
+            }
+            else
+            {
+                state.FreedomVector = currentLineVector;
+            }
+            return Success(out failure);
+        }
+
+        internal static bool ExecuteAlignPoints(TrueTypeExecutionContext context,
+            out TrueTypeVirtualMachineFailure failure)
+        {
+            if (!context.OperandStack.TryPop(out int firstPointIndex, out failure) ||
+                !context.OperandStack.TryPop(out int secondPointIndex, out failure)) return false;
+            TrueTypeGraphicsState state = context.VirtualMachineState.GraphicsState;
+            if (!TryPoint(context, state.ZonePointerZero, firstPointIndex, out TrueTypeHintingPoint firstPoint, out failure) ||
+                !TryPoint(context, state.ZonePointerOne, secondPointIndex, out TrueTypeHintingPoint secondPoint, out failure)) return false;
+
+            int projectedDistance = TrueTypeHintingGeometryOperations.ProjectDistanceCurrent(
+                firstPoint, secondPoint, state.ProjectionVector);
+            int firstPointMovement = -projectedDistance / 2;
+            int secondPointMovement = projectedDistance + firstPointMovement;
+            if (!TrueTypeHintingGeometryOperations.TryMovePointByProjectedDistance(
+                    firstPoint, firstPointMovement, state, out failure) ||
+                !TrueTypeHintingGeometryOperations.TryMovePointByProjectedDistance(
+                    secondPoint, secondPointMovement, state, out failure)) return false;
+            return Success(out failure);
+        }
+
+        internal static bool ExecuteIntersectLines(TrueTypeExecutionContext context,
+            out TrueTypeVirtualMachineFailure failure)
+        {
+            if (!context.OperandStack.TryPop(out int lineAFirstPointIndex, out failure) ||
+                !context.OperandStack.TryPop(out int lineASecondPointIndex, out failure) ||
+                !context.OperandStack.TryPop(out int lineBFirstPointIndex, out failure) ||
+                !context.OperandStack.TryPop(out int lineBSecondPointIndex, out failure) ||
+                !context.OperandStack.TryPop(out int movedPointIndex, out failure)) return false;
+            TrueTypeGraphicsState graphicsState = context.VirtualMachineState.GraphicsState;
+            if (!TryPoint(context, graphicsState.ZonePointerOne, lineAFirstPointIndex,
+                    out TrueTypeHintingPoint lineAFirstPoint, out failure) ||
+                !TryPoint(context, graphicsState.ZonePointerOne, lineASecondPointIndex,
+                    out TrueTypeHintingPoint lineASecondPoint, out failure) ||
+                !TryPoint(context, graphicsState.ZonePointerZero, lineBFirstPointIndex,
+                    out TrueTypeHintingPoint lineBFirstPoint, out failure) ||
+                !TryPoint(context, graphicsState.ZonePointerZero, lineBSecondPointIndex,
+                    out TrueTypeHintingPoint lineBSecondPoint, out failure) ||
+                !TryPoint(context, graphicsState.ZonePointerTwo, movedPointIndex,
+                    out TrueTypeHintingPoint movedPoint, out failure)) return false;
+
+            long lineADeltaHorizontal = (long)lineASecondPoint.CurrentHorizontalF26Dot6 -
+                lineAFirstPoint.CurrentHorizontalF26Dot6;
+            long lineADeltaVertical = (long)lineASecondPoint.CurrentVerticalF26Dot6 -
+                lineAFirstPoint.CurrentVerticalF26Dot6;
+            long lineBDeltaHorizontal = (long)lineBSecondPoint.CurrentHorizontalF26Dot6 -
+                lineBFirstPoint.CurrentHorizontalF26Dot6;
+            long lineBDeltaVertical = (long)lineBSecondPoint.CurrentVerticalF26Dot6 -
+                lineBFirstPoint.CurrentVerticalF26Dot6;
+            long lineCrossProduct = lineADeltaHorizontal * lineBDeltaVertical -
+                lineADeltaVertical * lineBDeltaHorizontal;
+
+            int intersectionHorizontalF26Dot6;
+            int intersectionVerticalF26Dot6;
+            if (lineCrossProduct == 0)
+            {
+                intersectionHorizontalF26Dot6 = DivideByFourRounded(
+                    (long)lineAFirstPoint.CurrentHorizontalF26Dot6 + lineASecondPoint.CurrentHorizontalF26Dot6 +
+                    lineBFirstPoint.CurrentHorizontalF26Dot6 + lineBSecondPoint.CurrentHorizontalF26Dot6);
+                intersectionVerticalF26Dot6 = DivideByFourRounded(
+                    (long)lineAFirstPoint.CurrentVerticalF26Dot6 + lineASecondPoint.CurrentVerticalF26Dot6 +
+                    lineBFirstPoint.CurrentVerticalF26Dot6 + lineBSecondPoint.CurrentVerticalF26Dot6);
+            }
+            else
+            {
+                long lineOriginDeltaHorizontal = (long)lineBFirstPoint.CurrentHorizontalF26Dot6 -
+                    lineAFirstPoint.CurrentHorizontalF26Dot6;
+                long lineOriginDeltaVertical = (long)lineBFirstPoint.CurrentVerticalF26Dot6 -
+                    lineAFirstPoint.CurrentVerticalF26Dot6;
+                long lineAParameterNumerator = lineOriginDeltaHorizontal * lineBDeltaVertical -
+                    lineOriginDeltaVertical * lineBDeltaHorizontal;
+                intersectionHorizontalF26Dot6 = lineAFirstPoint.CurrentHorizontalF26Dot6 + DivideRounded(
+                    lineAParameterNumerator * lineADeltaHorizontal, lineCrossProduct);
+                intersectionVerticalF26Dot6 = lineAFirstPoint.CurrentVerticalF26Dot6 + DivideRounded(
+                    lineAParameterNumerator * lineADeltaVertical, lineCrossProduct);
+            }
+
+            movedPoint.CurrentHorizontalF26Dot6 = intersectionHorizontalF26Dot6;
+            movedPoint.CurrentVerticalF26Dot6 = intersectionVerticalF26Dot6;
+            movedPoint.TouchFlags |= TrueTypePointTouchFlags.Horizontal | TrueTypePointTouchFlags.Vertical;
+            return Success(out failure);
+        }
+
+        private static int DivideByFourRounded(long value)
+            => value >= 0 ? (int)((value + 2) / 4) : (int)-((-value + 2) / 4);
+
+        private static int DivideRounded(long numerator, long denominator)
+        {
+            bool negative = (numerator < 0) != (denominator < 0);
+            long quotient = (Math.Abs(numerator) + Math.Abs(denominator) / 2) / Math.Abs(denominator);
+            return (int)(negative ? -quotient : quotient);
         }
 
         internal static bool ExecuteGetCoordinate(bool original, TrueTypeExecutionContext context, out TrueTypeVirtualMachineFailure failure)
@@ -164,18 +286,133 @@ namespace StbTrueTypeSharp.TrueTypeHinting.Geometry
         internal static bool ExecuteShiftPoints(bool useReferencePointOne, TrueTypeExecutionContext context, out TrueTypeVirtualMachineFailure failure)
         {
             TrueTypeGraphicsState state = context.VirtualMachineState.GraphicsState;
-            TrueTypeReferencePointIndex referencePointIndex = useReferencePointOne ? state.ReferencePointOne : state.ReferencePointTwo;
-            TrueTypeZonePointerIndex referenceZone = useReferencePointOne ? state.ZonePointerZero : state.ZonePointerOne;
-            if (!TryPoint(context, referenceZone, referencePointIndex.Value, out TrueTypeHintingPoint referencePoint, out failure)) return false;
-            int shift = TrueTypeHintingGeometryOperations.ProjectCurrent(referencePoint, state.ProjectionVector) -
-                TrueTypeHintingGeometryOperations.ProjectOriginal(referencePoint, state.DualProjectionVector);
+            if (!TryGetReferencePointShift(context, useReferencePointOne, out _, out _, out int shift, out failure)) return false;
             return ShiftLoopPoints(context, shift, out failure);
+        }
+
+        internal static bool ExecuteShiftContour(bool useReferencePointOne, TrueTypeExecutionContext context,
+            out TrueTypeVirtualMachineFailure failure)
+        {
+            if (!context.OperandStack.TryPop(out int contourIndex, out failure)) return false;
+            TrueTypeGraphicsState state = context.VirtualMachineState.GraphicsState;
+            if (!context.ExecutionZones.TryGetZone(state.ZonePointerTwo, out TrueTypeHintingZone targetZone, out failure)) return false;
+            if (!targetZone.TryGetContourPointRange(contourIndex, out int firstPointIndex, out int lastPointIndex))
+            {
+                failure = Failure(TrueTypeVirtualMachineFailureCode.InvalidContourIndex,
+                    "The TrueType contour index lies outside the selected zone.");
+                return false;
+            }
+            if (!TryGetReferencePointShift(context, useReferencePointOne, out TrueTypeZonePointerIndex referenceZone,
+                    out int referencePointIndex, out int shift, out failure)) return false;
+
+            for (int pointIndex = firstPointIndex; pointIndex <= lastPointIndex; pointIndex++)
+            {
+                if (referenceZone.Value == state.ZonePointerTwo.Value && pointIndex == referencePointIndex) continue;
+                if (!targetZone.TryGetPoint(pointIndex, out TrueTypeHintingPoint point) ||
+                    !TrueTypeHintingGeometryOperations.TryMovePointByProjectedDistance(point, shift, state, out failure)) return false;
+            }
+            return Success(out failure);
+        }
+
+        internal static bool ExecuteShiftZone(bool useReferencePointOne, TrueTypeExecutionContext context,
+            out TrueTypeVirtualMachineFailure failure)
+        {
+            if (!context.OperandStack.TryPop(out int targetZoneIndex, out failure)) return false;
+            TrueTypeGraphicsState state = context.VirtualMachineState.GraphicsState;
+            var targetZonePointer = new TrueTypeZonePointerIndex(targetZoneIndex);
+            if (!context.ExecutionZones.TryGetZone(targetZonePointer, out TrueTypeHintingZone targetZone, out failure) ||
+                !TryGetReferencePointShift(context, useReferencePointOne, out TrueTypeZonePointerIndex referenceZone,
+                    out int referencePointIndex, out int shift, out failure)) return false;
+
+            for (int pointIndex = 0; pointIndex < targetZone.PointCount; pointIndex++)
+            {
+                if (referenceZone.Value == targetZoneIndex && pointIndex == referencePointIndex) continue;
+                if (!targetZone.TryGetPoint(pointIndex, out TrueTypeHintingPoint point) ||
+                    !TrueTypeHintingGeometryOperations.TryMovePointByProjectedDistance(point, shift, state, out failure)) return false;
+            }
+            return Success(out failure);
+        }
+
+        private static bool TryGetReferencePointShift(TrueTypeExecutionContext context, bool useReferencePointOne,
+            out TrueTypeZonePointerIndex referenceZone, out int referencePointIndex, out int shift,
+            out TrueTypeVirtualMachineFailure failure)
+        {
+            TrueTypeGraphicsState state = context.VirtualMachineState.GraphicsState;
+            TrueTypeReferencePointIndex referencePoint = useReferencePointOne ? state.ReferencePointOne : state.ReferencePointTwo;
+            referenceZone = useReferencePointOne ? state.ZonePointerZero : state.ZonePointerOne;
+            referencePointIndex = referencePoint.Value;
+            if (!TryPoint(context, referenceZone, referencePointIndex, out TrueTypeHintingPoint point, out failure))
+            {
+                shift = 0;
+                return false;
+            }
+            shift = TrueTypeHintingGeometryOperations.ProjectCurrent(point, state.ProjectionVector) -
+                TrueTypeHintingGeometryOperations.ProjectOriginal(point, state.DualProjectionVector);
+            return true;
         }
 
         internal static bool ExecuteShiftPointsByPixelAmount(TrueTypeExecutionContext context, out TrueTypeVirtualMachineFailure failure)
         {
             if (!context.OperandStack.TryPop(out int shift, out failure)) return false;
             return ShiftLoopPoints(context, shift, out failure);
+        }
+
+        internal static bool ExecuteUntouchPoint(TrueTypeExecutionContext context,
+            out TrueTypeVirtualMachineFailure failure)
+        {
+            if (!context.OperandStack.TryPop(out int pointIndex, out failure)) return false;
+            TrueTypeGraphicsState graphicsState = context.VirtualMachineState.GraphicsState;
+            if (!TryPoint(context, graphicsState.ZonePointerZero, pointIndex,
+                    out TrueTypeHintingPoint hintingPoint, out failure)) return false;
+            if (graphicsState.FreedomVector.HorizontalComponent.Value != 0)
+                hintingPoint.TouchFlags &= ~TrueTypePointTouchFlags.Horizontal;
+            if (graphicsState.FreedomVector.VerticalComponent.Value != 0)
+                hintingPoint.TouchFlags &= ~TrueTypePointTouchFlags.Vertical;
+            return Success(out failure);
+        }
+
+        internal static bool ExecuteFlipPoints(TrueTypeExecutionContext context,
+            out TrueTypeVirtualMachineFailure failure)
+        {
+            TrueTypeGraphicsState graphicsState = context.VirtualMachineState.GraphicsState;
+            int loopCount = Math.Max(1, graphicsState.LoopCount.Value);
+            for (int loopIndex = 0; loopIndex < loopCount; loopIndex++)
+            {
+                if (!context.OperandStack.TryPop(out int pointIndex, out failure) ||
+                    !TryPoint(context, graphicsState.ZonePointerZero, pointIndex,
+                        out TrueTypeHintingPoint hintingPoint, out failure)) return false;
+                hintingPoint.IsOnCurve = !hintingPoint.IsOnCurve;
+            }
+            graphicsState.LoopCount = new TrueTypeLoopCount(1);
+            return Success(out failure);
+        }
+
+        internal static bool ExecuteSetPointRangeCurveState(bool onCurve, TrueTypeExecutionContext context,
+            out TrueTypeVirtualMachineFailure failure)
+        {
+            if (!context.OperandStack.TryPop(out int highPointIndex, out failure) ||
+                !context.OperandStack.TryPop(out int lowPointIndex, out failure)) return false;
+            if (lowPointIndex < 0 || highPointIndex < lowPointIndex)
+            {
+                failure = Failure(TrueTypeVirtualMachineFailureCode.InvalidPointIndex,
+                    "The TrueType point range must have non-negative ordered endpoints.");
+                return false;
+            }
+            TrueTypeZonePointerIndex targetZonePointer = context.VirtualMachineState.GraphicsState.ZonePointerZero;
+            if (!context.ExecutionZones.TryGetZone(targetZonePointer, out TrueTypeHintingZone targetZone, out failure) ||
+                highPointIndex >= targetZone.PointCount)
+            {
+                if (!failure.HasFailure)
+                    failure = Failure(TrueTypeVirtualMachineFailureCode.InvalidPointIndex,
+                        "The TrueType point range lies outside the selected zone.");
+                return false;
+            }
+            for (int pointIndex = lowPointIndex; pointIndex <= highPointIndex; pointIndex++)
+            {
+                targetZone.TryGetPoint(pointIndex, out TrueTypeHintingPoint hintingPoint);
+                hintingPoint.IsOnCurve = onCurve;
+            }
+            return Success(out failure);
         }
 
         internal static bool ExecuteDeltaPoints(TrueTypeExecutionContext context, int ppemBias, out TrueTypeVirtualMachineFailure failure)
@@ -189,12 +426,12 @@ namespace StbTrueTypeSharp.TrueTypeHinting.Geometry
             for (int exceptionIndex = 0; exceptionIndex < exceptionCount; exceptionIndex++)
             {
                 if (!context.OperandStack.TryPop(out int pointIndex, out failure) || !context.OperandStack.TryPop(out int argument, out failure)) return false;
-                int targetPpem = ((argument >> 4) & 15) + context.VirtualMachineState.GraphicsState.DeltaBasePpem + ppemBias;
+                TrueTypeGraphicsState graphicsState = context.VirtualMachineState.GraphicsState;
+                int targetPpem = ((argument >> 4) & 15) + graphicsState.DeltaBasePpem + ppemBias;
                 if (targetPpem != context.VirtualMachineState.RasterizerEnvironment.DevicePpemY.Value) continue;
-                int step = (argument & 15) - 8; if (step >= 0) step++;
-                int distance = step * (1 << Math.Max(0, 6 - context.VirtualMachineState.GraphicsState.DeltaShift));
-                if (!TryPoint(context, context.VirtualMachineState.GraphicsState.ZonePointerZero, pointIndex, out TrueTypeHintingPoint point, out failure) ||
-                    !TrueTypeHintingGeometryOperations.TryMovePointByProjectedDistance(point, distance, context.VirtualMachineState.GraphicsState, out failure)) return false;
+                int distance = TrueTypeDeltaState.DecodeDistanceF26Dot6(argument, graphicsState.DeltaShift);
+                if (!TryPoint(context, graphicsState.ZonePointerZero, pointIndex, out TrueTypeHintingPoint point, out failure) ||
+                    !TrueTypeHintingGeometryOperations.TryMovePointByProjectedDistance(point, distance, graphicsState, out failure)) return false;
             }
             return Success(out failure);
         }
@@ -216,7 +453,7 @@ namespace StbTrueTypeSharp.TrueTypeHinting.Geometry
         {
             int target = candidateDistance;
             bool round = (opcode & 0x04) != 0;
-            if (round) target = TrueTypeHintingGeometryOperations.RoundF26Dot6(target, state.RoundingMode);
+            if (round) target = TrueTypeHintingGeometryOperations.RoundF26Dot6(target, state);
             if ((opcode & 0x08) != 0 && Math.Abs(target) < state.MinimumDistanceF26Dot6)
                 target = originalDistance < 0 ? -state.MinimumDistanceF26Dot6 : state.MinimumDistanceF26Dot6;
             return target;

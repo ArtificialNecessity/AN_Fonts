@@ -39,6 +39,65 @@ namespace TrueTypeHinting.Tests
         }
 
         [Fact]
+        public void OddAndEvenApplyCurrentRoundStateBeforeParityTest()
+        {
+            TrueTypeVirtualMachineResult result = Interpreter().Execute(new byte[]
+            {
+                (byte)TrueTypeInstructionOpcode.RoundToGrid,
+                0xB8, 0x00, 0x5F, // 95/64px rounds to 1px: odd
+                (byte)TrueTypeInstructionOpcode.Odd,
+                0xB8, 0x00, 0x61, // 97/64px rounds to 2px: even
+                (byte)TrueTypeInstructionOpcode.Even,
+                (byte)TrueTypeInstructionOpcode.RoundToDoubleGrid,
+                0xB8, 0x00, 0x30, // 48/64px rounds to 1px under double-grid
+                (byte)TrueTypeInstructionOpcode.Odd,
+            });
+
+            Assert.True(result.Succeeded, result.Failure.ToString());
+            Assert.Equal(new[] { 1, 1, 1 }, Values(result));
+        }
+
+        [Fact]
+        public void OddAndEvenHandleNegativeRoundedValuesByIntegerParity()
+        {
+            TrueTypeVirtualMachineResult result = Interpreter().Execute(new byte[]
+            {
+                0xB8, 0xFF, 0xA1, // -95/64px rounds to -1px
+                (byte)TrueTypeInstructionOpcode.Odd,
+                0xB8, 0xFF, 0x9F, // -97/64px rounds to -2px
+                (byte)TrueTypeInstructionOpcode.Even,
+            });
+
+            Assert.True(result.Succeeded, result.Failure.ToString());
+            Assert.Equal(new[] { 1, 1 }, Values(result));
+        }
+
+        [Fact]
+        public void DebugConsumesItsOperandWithoutChangingExecution()
+        {
+            TrueTypeVirtualMachineResult result = Interpreter().Execute(new byte[]
+            {
+                0xB1, 7, 99,
+                (byte)TrueTypeInstructionOpcode.Debug,
+            });
+
+            Assert.True(result.Succeeded, result.Failure.ToString());
+            Assert.Equal(new[] { 7 }, Values(result));
+        }
+
+        [Fact]
+        public void DebugWithoutOperandFailsWithStackUnderflow()
+        {
+            TrueTypeVirtualMachineResult result = Interpreter().Execute(new byte[]
+            {
+                (byte)TrueTypeInstructionOpcode.Debug,
+            });
+
+            Assert.False(result.Succeeded);
+            Assert.Equal(TrueTypeVirtualMachineFailureCode.OperandStackUnderflow, result.Failure.FailureCode);
+        }
+
+        [Fact]
         public void FalseIfExecutesElseBranchAndSkipsNestedPushPayloads()
         {
             var interpreter = Interpreter();

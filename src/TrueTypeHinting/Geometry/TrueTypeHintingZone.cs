@@ -45,6 +45,21 @@ namespace StbTrueTypeSharp.TrueTypeHinting.Geometry
         internal TrueTypeContourEndPointIndex GetContourEndPointIndex(int trueTypeContourIndex)
             => _trueTypeContourEndPointIndices[trueTypeContourIndex];
 
+        internal bool TryGetContourPointRange(int trueTypeContourIndex, out int firstPointIndex, out int lastPointIndex)
+        {
+            if (trueTypeContourIndex < 0 || trueTypeContourIndex >= _trueTypeContourEndPointIndices.Length)
+            {
+                firstPointIndex = 0;
+                lastPointIndex = -1;
+                return false;
+            }
+            firstPointIndex = trueTypeContourIndex == 0
+                ? 0
+                : _trueTypeContourEndPointIndices[trueTypeContourIndex - 1].Value + 1;
+            lastPointIndex = _trueTypeContourEndPointIndices[trueTypeContourIndex].Value;
+            return true;
+        }
+
         internal TrueTypeHintingZone Clone()
             => new TrueTypeHintingZone(_trueTypeHintingPoints, _trueTypeContourEndPointIndices);
 
