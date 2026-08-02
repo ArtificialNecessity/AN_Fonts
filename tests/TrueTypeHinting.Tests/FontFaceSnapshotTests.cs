@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using StbTrueTypeSharp.TrueTypeHinting;
+using StbTrueTypeSharp.TrueTypeHinting.FontFace;
 using Xunit;
 
 namespace TrueTypeHinting.Tests
@@ -48,6 +49,41 @@ namespace TrueTypeHinting.Tests
             Assert.Equal(originalFontProgramFirstByte, trueTypeHintingFontFace.FontProgram.FontProgram.ToByteArray()[0]);
             Assert.True(trueTypeHintingFontFace.TryGetRawGlyphData(new TrueTypeGlyphIndex(0),
                 out _, out var trueTypeRawGlyphDataFailure), trueTypeRawGlyphDataFailure.ToString());
+        }
+
+        [Fact]
+        public void GlyphMetricSourceReadsLongAndTrailingHorizontalMetrics()
+        {
+            byte[] horizontalMetrics =
+            {
+                0x01, 0xF4, 0x00, 0x0A, // glyph 0: advance 500, bearing 10
+                0x02, 0x58, 0xFF, 0xEC, // glyph 1: advance 600, bearing -20
+                0x00, 0x1E,             // glyph 2: repeated advance 600, bearing 30
+            };
+            var metricSource = new TrueTypeHintingGlyphMetricSource(horizontalMetrics, 2,
+                new byte[0], 0, 800, -200);
+
+            TrueTypeHintingGlyphMetrics glyphMetrics =
+                metricSource.GetGlyphMetrics(new TrueTypeGlyphIndex(2), 700);
+
+            Assert.Equal(600, glyphMetrics.AdvanceWidthFontUnits);
+            Assert.Equal(30, glyphMetrics.LeftSideBearingFontUnits);
+            Assert.Equal(1000, glyphMetrics.AdvanceHeightFontUnits);
+            Assert.Equal(100, glyphMetrics.TopSideBearingFontUnits);
+        }
+
+        [Fact]
+        public void GlyphMetricSourceUsesExplicitVerticalMetricsWhenPresent()
+        {
+            var metricSource = new TrueTypeHintingGlyphMetricSource(
+                new byte[] { 0x01, 0xF4, 0x00, 0x0A }, 1,
+                new byte[] { 0x03, 0xE8, 0x00, 0x28 }, 1, 800, -200);
+
+            TrueTypeHintingGlyphMetrics glyphMetrics =
+                metricSource.GetGlyphMetrics(new TrueTypeGlyphIndex(0), 700);
+
+            Assert.Equal(1000, glyphMetrics.AdvanceHeightFontUnits);
+            Assert.Equal(40, glyphMetrics.TopSideBearingFontUnits);
         }
 
         [Fact]

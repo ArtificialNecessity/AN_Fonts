@@ -56,7 +56,8 @@ namespace StbTrueTypeSharp.TrueTypeHinting.Geometry
             if (rawGlyphDataBytes.Length == 0)
             {
                 trueTypeHintingGlyphInput = new TrueTypeHintingGlyphInput(trueTypeGlyphIndex,
-                    new TrueTypeHintingZone(new TrueTypeHintingPoint[0], new TrueTypeContourEndPointIndex[0]),
+                    new TrueTypeHintingZone(CreatePointsWithPhantomPoints(trueTypeHintingFontFace, devicePpemY,
+                        trueTypeGlyphIndex, new TrueTypeHintingPoint[0], 0, 0), new TrueTypeContourEndPointIndex[0]),
                     new TrueTypeGlyphInstructionBytes(new byte[0]));
                 trueTypeGlyphParsingFailure = default;
                 return true;
@@ -67,10 +68,14 @@ namespace StbTrueTypeSharp.TrueTypeHinting.Geometry
             short contourCount = ReadInt16(rawGlyphDataBytes, 0);
             if (contourCount < 0)
                 return Failed("The requested glyph is composite; Phase 3 currently accepts simple glyphs only.", out trueTypeGlyphParsingFailure);
-            if (contourCount == 0)
+            if (contourCount == 0 && rawGlyphDataBytes.Length == 10)
             {
+                int emptyGlyphMinimumHorizontalFontUnits = ReadInt16(rawGlyphDataBytes, 2);
+                int emptyGlyphMaximumVerticalFontUnits = ReadInt16(rawGlyphDataBytes, 8);
                 trueTypeHintingGlyphInput = new TrueTypeHintingGlyphInput(trueTypeGlyphIndex,
-                    new TrueTypeHintingZone(new TrueTypeHintingPoint[0], new TrueTypeContourEndPointIndex[0]),
+                    new TrueTypeHintingZone(CreatePointsWithPhantomPoints(trueTypeHintingFontFace, devicePpemY,
+                        trueTypeGlyphIndex, new TrueTypeHintingPoint[0], emptyGlyphMinimumHorizontalFontUnits,
+                        emptyGlyphMaximumVerticalFontUnits), new TrueTypeContourEndPointIndex[0]),
                     new TrueTypeGlyphInstructionBytes(new byte[0]));
                 trueTypeGlyphParsingFailure = default;
                 return true;
@@ -140,14 +145,20 @@ namespace StbTrueTypeSharp.TrueTypeHinting.Geometry
                 verticalFontUnits[pointIndex] = currentVerticalFontUnits;
             }
 
-            var hintingPoints = new TrueTypeHintingPoint[pointCount];
+            var outlineHintingPoints = new TrueTypeHintingPoint[pointCount];
             for (int pointIndex = 0; pointIndex < pointCount; pointIndex++)
             {
-                hintingPoints[pointIndex] = new TrueTypeHintingPoint(
+                outlineHintingPoints[pointIndex] = new TrueTypeHintingPoint(
                     ScaleFontUnitsToF26Dot6(horizontalFontUnits[pointIndex], trueTypeHintingFontFace.UnitsPerEm.Value, devicePpemY.Value),
                     ScaleFontUnitsToF26Dot6(verticalFontUnits[pointIndex], trueTypeHintingFontFace.UnitsPerEm.Value, devicePpemY.Value),
                     (pointFlags[pointIndex] & OnCurvePointFlag) != 0);
             }
+
+            int glyphMinimumHorizontalFontUnits = ReadInt16(rawGlyphDataBytes, 2);
+            int glyphMaximumVerticalFontUnits = ReadInt16(rawGlyphDataBytes, 8);
+            TrueTypeHintingPoint[] hintingPoints = CreatePointsWithPhantomPoints(trueTypeHintingFontFace,
+                devicePpemY, trueTypeGlyphIndex, outlineHintingPoints,
+                glyphMinimumHorizontalFontUnits, glyphMaximumVerticalFontUnits);
 
             trueTypeHintingGlyphInput = new TrueTypeHintingGlyphInput(trueTypeGlyphIndex,
                 new TrueTypeHintingZone(hintingPoints, contourEndPointIndices),
@@ -176,6 +187,51 @@ namespace StbTrueTypeSharp.TrueTypeHinting.Geometry
             byteCursor += 2;
             return true;
         }
+
+        private static TrueTypeHintingPoint[] CreatePointsWithPhantomPoints(
+            TrueTypeHintingFontFace trueTypeHintingFontFace, DevicePpemY devicePpemY,
+            TrueTypeGlyphIndex trueTypeGlyphIndex, TrueTypeHintingPoint[] outlineHintingPoints,
+            int glyphMinimumHorizontalFontUnits, int glyphMaximumVerticalFontUnits)
+        {
+            TrueTypeHintingGlyphMetrics glyphMetrics = trueTypeHintingFontFace.GlyphMetricSource.GetGlyphMetrics(
+                trueTypeGlyphIndex, glyphMaximumVerticalFontUnits);
+            int leftSideBearingPointHorizontalFontUnits =
+                glyphMinimumHorizontalFontUnits - glyphMetrics.LeftSideBearingFontUnits;
+            int advanceWidthPointHorizontalFontUnits =
+                leftSideBearingPointHorizontalFontUnits + glyphMetrics.AdvanceWidthFontUnits;
+            int topOriginPointVerticalFontUnits =
+                glyphMaximumVerticalFontUnits + glyphMetrics.TopSideBearingFontUnits;
+            int advanceHeightPointVerticalFontUnits =
+                topOriginPointVerticalFontUnits - glyphMetrics.AdvanceHeightFontUnits;
+
+            var pointsWithPhantomPoints = new TrueTypeHintingPoint[outlineHintingPoints.Length + 4];
+            Array.Copy(outlineHintingPoints, pointsWithPhantomPoints, outlineHintingPoints.Length);
+            pointsWithPhantomPoints[outlineHintingPoints.Length] = CreatePhantomPoint(
+                leftSideBearingPointHorizontalFontUnits, 0, trueTypeHintingFontFace, devicePpemY, roundHorizontal: true);
+            pointsWithPhantomPoints[outlineHintingPoints.Length + 1] = CreatePhantomPoint(
+                advanceWidthPointHorizontalFontUnits, 0, trueTypeHintingFontFace, devicePpemY, roundHorizontal: true);
+            // The OpenType specification leaves the vertical phantom X coordinate unspecified.
+            // This DirectWrite-targeted engine uses zero, matching modern DirectWrite behavior.
+            pointsWithPhantomPoints[outlineHintingPoints.Length + 2] = CreatePhantomPoint(
+                0, topOriginPointVerticalFontUnits, trueTypeHintingFontFace, devicePpemY, roundHorizontal: false);
+            pointsWithPhantomPoints[outlineHintingPoints.Length + 3] = CreatePhantomPoint(
+                0, advanceHeightPointVerticalFontUnits, trueTypeHintingFontFace, devicePpemY, roundHorizontal: false);
+            return pointsWithPhantomPoints;
+        }
+
+        private static TrueTypeHintingPoint CreatePhantomPoint(int horizontalFontUnits, int verticalFontUnits,
+            TrueTypeHintingFontFace fontFace, DevicePpemY devicePpemY, bool roundHorizontal)
+        {
+            var point = new TrueTypeHintingPoint(
+                ScaleFontUnitsToF26Dot6(horizontalFontUnits, fontFace.UnitsPerEm.Value, devicePpemY.Value),
+                ScaleFontUnitsToF26Dot6(verticalFontUnits, fontFace.UnitsPerEm.Value, devicePpemY.Value), false);
+            if (roundHorizontal) point.CurrentHorizontalF26Dot6 = RoundToPixel(point.CurrentHorizontalF26Dot6);
+            else point.CurrentVerticalF26Dot6 = RoundToPixel(point.CurrentVerticalF26Dot6);
+            return point;
+        }
+
+        private static int RoundToPixel(int f26Dot6Value)
+            => f26Dot6Value >= 0 ? ((f26Dot6Value + 32) / 64) * 64 : -(((-f26Dot6Value + 32) / 64) * 64);
 
         private static int ScaleFontUnitsToF26Dot6(int fontUnitValue, int unitsPerEm, int devicePpemY)
         {
