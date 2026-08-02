@@ -35,7 +35,7 @@ namespace TrueTypeHinting.Tests
                     (byte)TrueTypeInstructionOpcode.Add,
                 (byte)TrueTypeInstructionOpcode.EndFunction,
                 0xB0, 1,
-                0xB1, 4, 3,
+                0xB1, 3, 4, // repeat count, then function identifier (topmost)
                 (byte)TrueTypeInstructionOpcode.LoopCall,
             });
 

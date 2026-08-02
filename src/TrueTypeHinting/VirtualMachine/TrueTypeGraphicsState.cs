@@ -75,6 +75,11 @@ namespace StbTrueTypeSharp.TrueTypeHinting.VirtualMachine
         internal int ControlValueCutInF26Dot6 { get; set; } = 68;
         internal int SingleWidthCutInF26Dot6 { get; set; } = 0;
         internal int SingleWidthValueF26Dot6 { get; set; } = 0;
+        internal int DeltaBasePpem { get; set; } = 9;
+        internal int DeltaShift { get; set; } = 3;
+        internal int ScanControlFlags { get; set; } = 0;
+        internal int ScanType { get; set; } = 0;
+        internal int InstructionControlFlags { get; set; } = 0;
         internal bool AutoFlip { get; set; } = true;
     }
 }
