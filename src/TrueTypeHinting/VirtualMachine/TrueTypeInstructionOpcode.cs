@@ -1,0 +1,42 @@
+namespace StbTrueTypeSharp.TrueTypeHinting.VirtualMachine
+{
+    /// <summary>Opcode values used by the TrueType instruction stream.</summary>
+    internal enum TrueTypeInstructionOpcode : byte
+    {
+        Else = 0x1B,
+        JumpRelative = 0x1C,
+        Duplicate = 0x20,
+        Pop = 0x21,
+        Clear = 0x22,
+        Swap = 0x23,
+        Depth = 0x24,
+        CopyIndexed = 0x25,
+        MoveIndexed = 0x26,
+        PushBytesVariable = 0x40,
+        PushWordsVariable = 0x41,
+        LessThan = 0x50,
+        LessThanOrEqual = 0x51,
+        GreaterThan = 0x52,
+        GreaterThanOrEqual = 0x53,
+        Equal = 0x54,
+        NotEqual = 0x55,
+        If = 0x58,
+        EndIf = 0x59,
+        And = 0x5A,
+        Or = 0x5B,
+        Not = 0x5C,
+        Add = 0x60,
+        Subtract = 0x61,
+        Divide = 0x62,
+        Multiply = 0x63,
+        Absolute = 0x64,
+        Negate = 0x65,
+        Floor = 0x66,
+        Ceiling = 0x67,
+        JumpRelativeOnTrue = 0x78,
+        JumpRelativeOnFalse = 0x79,
+        Roll = 0x8A,
+        Maximum = 0x8B,
+        Minimum = 0x8C,
+    }
+}
