@@ -52,6 +52,10 @@ namespace StbTrueTypeSharp.TrueTypeHinting.VirtualMachine
         internal bool GlyphRotated => false;
         internal bool GlyphStretched => false;
         internal int PointSizeF26Dot6 => DevicePpemY.Value * 48; // 96 DPI: points = pixels * 72/96.
+
+        internal TrueTypeRasterizerEnvironment Clone()
+            => new TrueTypeRasterizerEnvironment(DevicePpemY, UnitsPerEmScale,
+                SymmetricSmoothingEnabled, GrayscaleClearTypeEnabled);
     }
 
     /// <summary>Persistent font/size VM state shared by fpgm, prep, and glyph executions.</summary>
@@ -61,15 +65,16 @@ namespace StbTrueTypeSharp.TrueTypeHinting.VirtualMachine
         private readonly int[] _trueTypeControlValues;
 
         internal TrueTypeVirtualMachineState(TrueTypeStorageCapacity trueTypeStorageCapacity,
-            int[] initialTrueTypeControlValues, TrueTypeRasterizerEnvironment rasterizerEnvironment)
+            int[] initialTrueTypeControlValues, TrueTypeRasterizerEnvironment rasterizerEnvironment,
+            TrueTypeFunctionDefinitions functionDefinitions = null, TrueTypeGraphicsState graphicsState = null)
         {
             _trueTypeStorageValues = new int[trueTypeStorageCapacity.Value];
             _trueTypeControlValues = initialTrueTypeControlValues == null
                 ? new int[0]
                 : (int[])initialTrueTypeControlValues.Clone();
             RasterizerEnvironment = rasterizerEnvironment ?? throw new ArgumentNullException(nameof(rasterizerEnvironment));
-            FunctionDefinitions = new TrueTypeFunctionDefinitions();
-            GraphicsState = new TrueTypeGraphicsState();
+            FunctionDefinitions = functionDefinitions ?? new TrueTypeFunctionDefinitions();
+            GraphicsState = graphicsState ?? new TrueTypeGraphicsState();
         }
 
         internal TrueTypeRasterizerEnvironment RasterizerEnvironment { get; }
@@ -143,6 +148,36 @@ namespace StbTrueTypeSharp.TrueTypeHinting.VirtualMachine
             return scaledNumerator >= 0
                 ? (int)((scaledNumerator + unitsPerEm / 2) / unitsPerEm)
                 : (int)-((-scaledNumerator + unitsPerEm / 2) / unitsPerEm);
+        }
+
+        internal TrueTypeVirtualMachineState CloneForSizeInstance(int[] scaledControlValues,
+            TrueTypeRasterizerEnvironment rasterizerEnvironment)
+        {
+            // fpgm definitions and storage are face-lifetime state. Graphics-state defaults
+            // are reset before prep establishes the defaults for this size instance.
+            var clonedState = new TrueTypeVirtualMachineState(StorageCapacity, scaledControlValues,
+                rasterizerEnvironment, FunctionDefinitions.Clone(), new TrueTypeGraphicsState());
+            for (int storageIndex = 0; storageIndex < _trueTypeStorageValues.Length; storageIndex++)
+                clonedState._trueTypeStorageValues[storageIndex] = _trueTypeStorageValues[storageIndex];
+            return clonedState;
+        }
+
+        internal TrueTypeVirtualMachineState CloneForGlyphExecution()
+        {
+            var clonedState = new TrueTypeVirtualMachineState(StorageCapacity, _trueTypeControlValues,
+                RasterizerEnvironment.Clone(), FunctionDefinitions.Clone(), GraphicsState.CloneForGlyphExecution());
+            for (int storageIndex = 0; storageIndex < _trueTypeStorageValues.Length; storageIndex++)
+                clonedState._trueTypeStorageValues[storageIndex] = _trueTypeStorageValues[storageIndex];
+            return clonedState;
+        }
+
+        internal TrueTypeVirtualMachineState ClonePreparedState()
+        {
+            var clonedState = new TrueTypeVirtualMachineState(StorageCapacity, _trueTypeControlValues,
+                RasterizerEnvironment.Clone(), FunctionDefinitions.Clone(), GraphicsState.ClonePreparedState());
+            for (int storageIndex = 0; storageIndex < _trueTypeStorageValues.Length; storageIndex++)
+                clonedState._trueTypeStorageValues[storageIndex] = _trueTypeStorageValues[storageIndex];
+            return clonedState;
         }
 
         internal static TrueTypeVirtualMachineState ForTests(int storageCapacity = 32, params int[] initialControlValues)

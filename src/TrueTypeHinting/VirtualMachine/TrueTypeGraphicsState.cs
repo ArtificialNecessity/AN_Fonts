@@ -81,5 +81,47 @@ namespace StbTrueTypeSharp.TrueTypeHinting.VirtualMachine
         internal int ScanType { get; set; } = 0;
         internal int InstructionControlFlags { get; set; } = 0;
         internal bool AutoFlip { get; set; } = true;
+
+        /// <summary>Copies the prepared size defaults and resets glyph-local references.</summary>
+        internal TrueTypeGraphicsState CloneForGlyphExecution()
+        {
+            return new TrueTypeGraphicsState
+            {
+                ProjectionVector = ProjectionVector,
+                FreedomVector = FreedomVector,
+                DualProjectionVector = DualProjectionVector,
+                ReferencePointZero = new TrueTypeReferencePointIndex(0),
+                ReferencePointOne = new TrueTypeReferencePointIndex(0),
+                ReferencePointTwo = new TrueTypeReferencePointIndex(0),
+                ZonePointerZero = new TrueTypeZonePointerIndex(1),
+                ZonePointerOne = new TrueTypeZonePointerIndex(1),
+                ZonePointerTwo = new TrueTypeZonePointerIndex(1),
+                LoopCount = new TrueTypeLoopCount(1),
+                RoundingMode = RoundingMode,
+                MinimumDistanceF26Dot6 = MinimumDistanceF26Dot6,
+                ControlValueCutInF26Dot6 = ControlValueCutInF26Dot6,
+                SingleWidthCutInF26Dot6 = SingleWidthCutInF26Dot6,
+                SingleWidthValueF26Dot6 = SingleWidthValueF26Dot6,
+                DeltaBasePpem = DeltaBasePpem,
+                DeltaShift = DeltaShift,
+                ScanControlFlags = ScanControlFlags,
+                ScanType = ScanType,
+                InstructionControlFlags = InstructionControlFlags,
+                AutoFlip = AutoFlip,
+            };
+        }
+
+        internal TrueTypeGraphicsState ClonePreparedState()
+        {
+            TrueTypeGraphicsState clonedGraphicsState = CloneForGlyphExecution();
+            clonedGraphicsState.ReferencePointZero = ReferencePointZero;
+            clonedGraphicsState.ReferencePointOne = ReferencePointOne;
+            clonedGraphicsState.ReferencePointTwo = ReferencePointTwo;
+            clonedGraphicsState.ZonePointerZero = ZonePointerZero;
+            clonedGraphicsState.ZonePointerOne = ZonePointerOne;
+            clonedGraphicsState.ZonePointerTwo = ZonePointerTwo;
+            clonedGraphicsState.LoopCount = LoopCount;
+            return clonedGraphicsState;
+        }
     }
 }

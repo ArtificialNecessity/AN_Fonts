@@ -13,6 +13,18 @@ namespace StbTrueTypeSharp.TrueTypeHinting.VirtualMachine
         private readonly Dictionary<int, byte[]> _trueTypeFunctionBodies = new Dictionary<int, byte[]>();
         private readonly Dictionary<byte, byte[]> _trueTypeInstructionDefinitionBodies = new Dictionary<byte, byte[]>();
 
+        internal TrueTypeFunctionDefinitions Clone()
+        {
+            var clonedTrueTypeFunctionDefinitions = new TrueTypeFunctionDefinitions();
+            foreach (KeyValuePair<int, byte[]> trueTypeFunctionBody in _trueTypeFunctionBodies)
+                clonedTrueTypeFunctionDefinitions._trueTypeFunctionBodies.Add(trueTypeFunctionBody.Key,
+                    (byte[])trueTypeFunctionBody.Value.Clone());
+            foreach (KeyValuePair<byte, byte[]> trueTypeInstructionDefinitionBody in _trueTypeInstructionDefinitionBodies)
+                clonedTrueTypeFunctionDefinitions._trueTypeInstructionDefinitionBodies.Add(trueTypeInstructionDefinitionBody.Key,
+                    (byte[])trueTypeInstructionDefinitionBody.Value.Clone());
+            return clonedTrueTypeFunctionDefinitions;
+        }
+
         internal bool TryDefineFunction(TrueTypeFunctionIdentifier trueTypeFunctionIdentifier, byte[] trueTypeFunctionBody,
             out TrueTypeVirtualMachineFailure trueTypeFunctionFailure)
         {
