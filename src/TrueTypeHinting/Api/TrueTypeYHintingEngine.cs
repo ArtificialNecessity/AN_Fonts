@@ -25,6 +25,8 @@ namespace StbTrueTypeSharp.TrueTypeHinting
             TrueTypeTableTag maximumProfileTableTag = TrueTypeTableTag.FromAscii("maxp");
             TrueTypeTableTag glyphDataTableTag = TrueTypeTableTag.FromAscii("glyf");
             TrueTypeTableTag glyphLocationTableTag = TrueTypeTableTag.FromAscii("loca");
+            TrueTypeTableTag horizontalHeaderTableTag = TrueTypeTableTag.FromAscii("hhea");
+            TrueTypeTableTag horizontalMetricsTableTag = TrueTypeTableTag.FromAscii("hmtx");
 
             if (!trueTypeTableReader.TryCopyRequiredTable(headTableTag, 54,
                     out TrueTypeTableBytes headTableBytes, out trueTypeHintingFontFaceFailure) ||
@@ -33,7 +35,11 @@ namespace StbTrueTypeSharp.TrueTypeHinting
                 !trueTypeTableReader.TryCopyRequiredTable(glyphDataTableTag, 0,
                     out TrueTypeTableBytes glyphDataTableBytes, out trueTypeHintingFontFaceFailure) ||
                 !trueTypeTableReader.TryCopyRequiredTable(glyphLocationTableTag, 2,
-                    out TrueTypeTableBytes glyphLocationTableBytes, out trueTypeHintingFontFaceFailure))
+                    out TrueTypeTableBytes glyphLocationTableBytes, out trueTypeHintingFontFaceFailure) ||
+                !trueTypeTableReader.TryCopyRequiredTable(horizontalHeaderTableTag, 36,
+                    out TrueTypeTableBytes horizontalHeaderTableBytes, out trueTypeHintingFontFaceFailure) ||
+                !trueTypeTableReader.TryCopyRequiredTable(horizontalMetricsTableTag, 4,
+                    out TrueTypeTableBytes horizontalMetricsTableBytes, out trueTypeHintingFontFaceFailure))
                 return false;
 
             byte[] headBytes = headTableBytes.CloneBytes();
@@ -64,6 +70,35 @@ namespace StbTrueTypeSharp.TrueTypeHinting
                 return false;
             }
 
+            byte[] horizontalHeaderBytes = horizontalHeaderTableBytes.CloneBytes();
+            int horizontalLongMetricCount = TrueTypeHintingTableReader.ReadUInt16(horizontalHeaderBytes, 34);
+            if (!ValidateMetricTable(horizontalMetricsTableBytes, horizontalLongMetricCount, trueTypeGlyphCountValue,
+                    "horizontal", out trueTypeHintingFontFaceFailure))
+                return false;
+
+            TrueTypeTableBytes verticalHeaderTableBytes = trueTypeTableReader.CopyOptionalTable(TrueTypeTableTag.FromAscii("vhea"));
+            TrueTypeTableBytes verticalMetricsTableBytes = trueTypeTableReader.CopyOptionalTable(TrueTypeTableTag.FromAscii("vmtx"));
+            if ((verticalHeaderTableBytes.ByteLength == 0) != (verticalMetricsTableBytes.ByteLength == 0))
+            {
+                trueTypeHintingFontFaceFailure = Failure(TrueTypeHintingFailureCode.MissingRequiredTable,
+                    "TrueType vertical phantom metrics require both 'vhea' and 'vmtx' when either table is present.");
+                return false;
+            }
+            int verticalLongMetricCount = 0;
+            if (verticalHeaderTableBytes.ByteLength > 0)
+            {
+                if (verticalHeaderTableBytes.ByteLength < 36)
+                {
+                    trueTypeHintingFontFaceFailure = Failure(TrueTypeHintingFailureCode.TruncatedTable,
+                        "The vhea table is shorter than 36 bytes.");
+                    return false;
+                }
+                verticalLongMetricCount = TrueTypeHintingTableReader.ReadUInt16(verticalHeaderTableBytes.CloneBytes(), 34);
+                if (!ValidateMetricTable(verticalMetricsTableBytes, verticalLongMetricCount, trueTypeGlyphCountValue,
+                        "vertical", out trueTypeHintingFontFaceFailure))
+                    return false;
+            }
+
             var maximumProfile = new TrueTypeHintingMaximumProfile(
                 TrueTypeHintingTableReader.ReadUInt16(maximumProfileBytes, 6),
                 TrueTypeHintingTableReader.ReadUInt16(maximumProfileBytes, 8),
@@ -80,12 +115,47 @@ namespace StbTrueTypeSharp.TrueTypeHinting
                 trueTypeTableReader.CopyOptionalTable(TrueTypeTableTag.FromAscii("fpgm")),
                 trueTypeTableReader.CopyOptionalTable(TrueTypeTableTag.FromAscii("prep")));
 
+            int defaultAscenderFontUnits = TrueTypeHintingTableReader.ReadInt16(horizontalHeaderBytes, 4);
+            int defaultDescenderFontUnits = TrueTypeHintingTableReader.ReadInt16(horizontalHeaderBytes, 6);
+            TrueTypeTableBytes operatingSystemMetricsTableBytes =
+                trueTypeTableReader.CopyOptionalTable(TrueTypeTableTag.FromAscii("OS/2"));
+            if (operatingSystemMetricsTableBytes.ByteLength >= 72)
+            {
+                byte[] operatingSystemMetricsBytes = operatingSystemMetricsTableBytes.CloneBytes();
+                defaultAscenderFontUnits = TrueTypeHintingTableReader.ReadInt16(operatingSystemMetricsBytes, 68);
+                defaultDescenderFontUnits = TrueTypeHintingTableReader.ReadInt16(operatingSystemMetricsBytes, 70);
+            }
+            var glyphMetricSource = new TrueTypeHintingGlyphMetricSource(
+                horizontalMetricsTableBytes.CloneBytes(), horizontalLongMetricCount,
+                verticalMetricsTableBytes.CloneBytes(), verticalLongMetricCount,
+                defaultAscenderFontUnits, defaultDescenderFontUnits);
+
             trueTypeHintingFontFace = new TrueTypeHintingFontFace(trueTypeFaceIndex,
                 new TrueTypeUnitsPerEm(trueTypeUnitsPerEmValue), new TrueTypeGlyphCount(trueTypeGlyphCountValue),
-                maximumProfile, fontProgram, glyphDataTableBytes.CloneBytes(),
+                maximumProfile, fontProgram, glyphMetricSource, glyphDataTableBytes.CloneBytes(),
                 glyphLocationTableBytes.CloneBytes(), glyphLocationFormat,
                 trueTypeTableReader.CopyOptionalTable(TrueTypeTableTag.FromAscii("gasp")));
             trueTypeHintingFontFaceFailure = default;
+            return true;
+        }
+
+        private static bool ValidateMetricTable(TrueTypeTableBytes metricTableBytes, int longMetricCount,
+            int glyphCount, string metricDirection, out TrueTypeYHintingFailure metricTableFailure)
+        {
+            if (longMetricCount <= 0 || longMetricCount > glyphCount)
+            {
+                metricTableFailure = Failure(TrueTypeHintingFailureCode.InvalidSfntDirectory,
+                    "The " + metricDirection + " long-metric count is outside the glyph count.");
+                return false;
+            }
+            long requiredMetricTableByteLength = 4L * longMetricCount + 2L * (glyphCount - longMetricCount);
+            if (metricTableBytes.ByteLength < requiredMetricTableByteLength)
+            {
+                metricTableFailure = Failure(TrueTypeHintingFailureCode.TruncatedTable,
+                    "The " + metricDirection + " metric table is too short for the glyph count.");
+                return false;
+            }
+            metricTableFailure = default;
             return true;
         }
 

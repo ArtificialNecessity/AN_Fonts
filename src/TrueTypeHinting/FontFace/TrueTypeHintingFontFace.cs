@@ -13,6 +13,7 @@ namespace StbTrueTypeSharp.TrueTypeHinting.FontFace
             TrueTypeUnitsPerEm trueTypeUnitsPerEm, TrueTypeGlyphCount trueTypeGlyphCount,
             TrueTypeHintingMaximumProfile trueTypeHintingMaximumProfile,
             TrueTypeHintingFontProgram trueTypeHintingFontProgram,
+            TrueTypeHintingGlyphMetricSource trueTypeHintingGlyphMetricSource,
             byte[] glyphDataTableBytes, byte[] glyphLocationTableBytes, short glyphLocationFormat,
             TrueTypeTableBytes gridFittingAndScanConversionTable)
         {
@@ -21,6 +22,7 @@ namespace StbTrueTypeSharp.TrueTypeHinting.FontFace
             GlyphCount = trueTypeGlyphCount;
             MaximumProfile = trueTypeHintingMaximumProfile;
             FontProgram = trueTypeHintingFontProgram;
+            GlyphMetricSource = trueTypeHintingGlyphMetricSource ?? throw new ArgumentNullException(nameof(trueTypeHintingGlyphMetricSource));
             _glyphDataTableBytes = glyphDataTableBytes ?? throw new ArgumentNullException(nameof(glyphDataTableBytes));
             _glyphLocationTableBytes = glyphLocationTableBytes ?? throw new ArgumentNullException(nameof(glyphLocationTableBytes));
             _glyphLocationFormat = glyphLocationFormat;
@@ -32,6 +34,7 @@ namespace StbTrueTypeSharp.TrueTypeHinting.FontFace
         public TrueTypeGlyphCount GlyphCount { get; }
         public TrueTypeHintingMaximumProfile MaximumProfile { get; }
         public TrueTypeHintingFontProgram FontProgram { get; }
+        internal TrueTypeHintingGlyphMetricSource GlyphMetricSource { get; }
         public TrueTypeTableBytes GridFittingAndScanConversionTable { get; }
 
         /// <summary>Returns one immutable copy of the raw glyf record for a validated glyph index.</summary>
