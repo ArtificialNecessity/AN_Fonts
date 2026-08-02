@@ -110,6 +110,17 @@ namespace StbTrueTypeSharp.TrueTypeHinting.VirtualMachine
             return true;
         }
 
+        internal int[] SnapshotBottomToTop(int maximumSnapshotValueCount, out bool snapshotTruncated)
+        {
+            if (maximumSnapshotValueCount < 0) throw new ArgumentOutOfRangeException(nameof(maximumSnapshotValueCount));
+            int snapshotValueCount = Math.Min(_trueTypeOperandCount, maximumSnapshotValueCount);
+            var snapshotValues = new int[snapshotValueCount];
+            if (snapshotValueCount > 0)
+                Array.Copy(_trueTypeOperandValues, 0, snapshotValues, 0, snapshotValueCount);
+            snapshotTruncated = snapshotValueCount < _trueTypeOperandCount;
+            return snapshotValues;
+        }
+
         internal void Clear() => _trueTypeOperandCount = 0;
 
         private static TrueTypeVirtualMachineFailure Failure(TrueTypeVirtualMachineFailureCode failureCode, string failureMessage)

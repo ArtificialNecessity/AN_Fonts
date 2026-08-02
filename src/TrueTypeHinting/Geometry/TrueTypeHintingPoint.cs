@@ -24,7 +24,7 @@ namespace StbTrueTypeSharp.TrueTypeHinting.Geometry
         internal int OriginalVerticalF26Dot6 { get; set; }
         internal int CurrentHorizontalF26Dot6 { get; set; }
         internal int CurrentVerticalF26Dot6 { get; set; }
-        internal bool IsOnCurve { get; }
+        internal bool IsOnCurve { get; set; }
         internal TrueTypePointTouchFlags TouchFlags { get; set; }
         internal bool IsTouchedHorizontally => (TouchFlags & TrueTypePointTouchFlags.Horizontal) != 0;
         internal bool IsTouchedVertically => (TouchFlags & TrueTypePointTouchFlags.Vertical) != 0;

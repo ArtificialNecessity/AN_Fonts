@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using StbTrueTypeSharp.TrueTypeHinting.Diagnostics;
 using StbTrueTypeSharp.TrueTypeHinting.Geometry;
 
 namespace StbTrueTypeSharp.TrueTypeHinting.VirtualMachine
@@ -49,6 +50,12 @@ namespace StbTrueTypeSharp.TrueTypeHinting.VirtualMachine
         internal TrueTypeVirtualMachineResult Execute(byte[] trueTypeInstructionBytes,
             TrueTypeVirtualMachineState trueTypeVirtualMachineState,
             TrueTypeHintingExecutionZones trueTypeHintingExecutionZones)
+            => Execute(trueTypeInstructionBytes, trueTypeVirtualMachineState, trueTypeHintingExecutionZones, null);
+
+        internal TrueTypeVirtualMachineResult Execute(byte[] trueTypeInstructionBytes,
+            TrueTypeVirtualMachineState trueTypeVirtualMachineState,
+            TrueTypeHintingExecutionZones trueTypeHintingExecutionZones,
+            TrueTypeHintingExecutionTrace trueTypeHintingExecutionTrace)
         {
             if (trueTypeVirtualMachineState == null) throw new ArgumentNullException(nameof(trueTypeVirtualMachineState));
             if (!TrueTypeInstructionStream.TryValidateConditionalStructure(trueTypeInstructionBytes,
@@ -57,7 +64,7 @@ namespace StbTrueTypeSharp.TrueTypeHinting.VirtualMachine
                     trueTypeValidationFailure, 0, trueTypeVirtualMachineState);
 
             var trueTypeExecutionContext = new TrueTypeExecutionContext(_trueTypeExecutionLimits,
-                trueTypeVirtualMachineState, trueTypeHintingExecutionZones);
+                trueTypeVirtualMachineState, trueTypeHintingExecutionZones, trueTypeHintingExecutionTrace);
             if (!ExecuteProgram(trueTypeInstructionBytes, trueTypeExecutionContext, out TrueTypeVirtualMachineFailure trueTypeProgramFailure))
                 return Failed(trueTypeProgramFailure, trueTypeExecutionContext);
             return new TrueTypeVirtualMachineResult(true, SnapshotStack(trueTypeExecutionContext.OperandStack),
@@ -76,9 +83,11 @@ namespace StbTrueTypeSharp.TrueTypeHinting.VirtualMachine
                         "The TrueType program exceeded its instruction-execution budget.");
                     return false;
                 }
+                int trueTypeInstructionExecutionOrdinal = trueTypeExecutionContext.ExecutedInstructionCount;
                 int trueTypeOpcodeBytePosition = trueTypeInstructionStream.InstructionBytePosition;
-                if (!trueTypeInstructionStream.TryReadByte(out byte trueTypeOpcodeByte, out trueTypeProgramFailure) ||
-                    !ExecuteOpcode(trueTypeOpcodeByte, trueTypeInstructionStream, trueTypeExecutionContext, out trueTypeProgramFailure))
+                if (!trueTypeInstructionStream.TryReadByte(out byte trueTypeOpcodeByte, out trueTypeProgramFailure))
+                    return false;
+                if (!ExecuteOpcode(trueTypeOpcodeByte, trueTypeInstructionStream, trueTypeExecutionContext, out trueTypeProgramFailure))
                 {
                     if (trueTypeProgramFailure.HasFailure)
                         trueTypeProgramFailure = Failure(trueTypeProgramFailure.FailureCode,
@@ -86,6 +95,14 @@ namespace StbTrueTypeSharp.TrueTypeHinting.VirtualMachine
                             " at program byte " + trueTypeOpcodeBytePosition + "]");
                     return false;
                 }
+                trueTypeExecutionContext.ExecutionTrace?.Capture(
+                    trueTypeInstructionExecutionOrdinal,
+                    trueTypeExecutionContext.ActiveCallDepth,
+                    trueTypeOpcodeBytePosition,
+                    trueTypeOpcodeByte,
+                    trueTypeExecutionContext.OperandStack,
+                    trueTypeExecutionContext.VirtualMachineState,
+                    trueTypeExecutionContext.ExecutionZones);
             }
             trueTypeProgramFailure = default;
             return true;
@@ -115,6 +132,12 @@ namespace StbTrueTypeSharp.TrueTypeHinting.VirtualMachine
                 case TrueTypeInstructionOpcode.SetProjectionVectorToXAxis: SetProjectionVector(trueTypeGraphicsState, TrueTypeUnitVector.Horizontal); break;
                 case TrueTypeInstructionOpcode.SetFreedomVectorToYAxis: trueTypeGraphicsState.FreedomVector = TrueTypeUnitVector.Vertical; break;
                 case TrueTypeInstructionOpcode.SetFreedomVectorToXAxis: trueTypeGraphicsState.FreedomVector = TrueTypeUnitVector.Horizontal; break;
+                case TrueTypeInstructionOpcode.SetProjectionVectorParallelToLine: return ExecuteSetVectorToLine(true, false, false, trueTypeExecutionContext, out trueTypeProgramFailure);
+                case TrueTypeInstructionOpcode.SetProjectionVectorPerpendicularToLine: return ExecuteSetVectorToLine(true, false, true, trueTypeExecutionContext, out trueTypeProgramFailure);
+                case TrueTypeInstructionOpcode.SetFreedomVectorParallelToLine: return ExecuteSetVectorToLine(false, false, false, trueTypeExecutionContext, out trueTypeProgramFailure);
+                case TrueTypeInstructionOpcode.SetFreedomVectorPerpendicularToLine: return ExecuteSetVectorToLine(false, false, true, trueTypeExecutionContext, out trueTypeProgramFailure);
+                case TrueTypeInstructionOpcode.SetDualProjectionVectorsParallelToLine: return ExecuteSetVectorToLine(true, true, false, trueTypeExecutionContext, out trueTypeProgramFailure);
+                case TrueTypeInstructionOpcode.SetDualProjectionVectorsPerpendicularToLine: return ExecuteSetVectorToLine(true, true, true, trueTypeExecutionContext, out trueTypeProgramFailure);
                 case TrueTypeInstructionOpcode.SetProjectionVectorFromStack:
                     if (!TryPopUnitVector(trueTypeOperandStack, out TrueTypeUnitVector projectionVector, out trueTypeProgramFailure)) return false;
                     SetProjectionVector(trueTypeGraphicsState, projectionVector); return true;
@@ -127,6 +150,7 @@ namespace StbTrueTypeSharp.TrueTypeHinting.VirtualMachine
                     return PushUnitVector(trueTypeOperandStack, trueTypeGraphicsState.FreedomVector, out trueTypeProgramFailure);
                 case TrueTypeInstructionOpcode.SetFreedomVectorToProjectionVector:
                     trueTypeGraphicsState.FreedomVector = trueTypeGraphicsState.ProjectionVector; break;
+                case TrueTypeInstructionOpcode.IntersectLines: return ExecuteIntersectLines(trueTypeExecutionContext, out trueTypeProgramFailure);
                 case TrueTypeInstructionOpcode.SetReferencePointZero: return PopReferencePoint(trueTypeOperandStack, value => trueTypeGraphicsState.ReferencePointZero = new TrueTypeReferencePointIndex(value), out trueTypeProgramFailure);
                 case TrueTypeInstructionOpcode.SetReferencePointOne: return PopReferencePoint(trueTypeOperandStack, value => trueTypeGraphicsState.ReferencePointOne = new TrueTypeReferencePointIndex(value), out trueTypeProgramFailure);
                 case TrueTypeInstructionOpcode.SetReferencePointTwo: return PopReferencePoint(trueTypeOperandStack, value => trueTypeGraphicsState.ReferencePointTwo = new TrueTypeReferencePointIndex(value), out trueTypeProgramFailure);
@@ -138,13 +162,16 @@ namespace StbTrueTypeSharp.TrueTypeHinting.VirtualMachine
                 case TrueTypeInstructionOpcode.SetLoopCount: return PopReferencePoint(trueTypeOperandStack, value => trueTypeGraphicsState.LoopCount = new TrueTypeLoopCount(value), out trueTypeProgramFailure);
                 case TrueTypeInstructionOpcode.RoundToGrid: trueTypeGraphicsState.RoundingMode = TrueTypeRoundingMode.ToGrid; break;
                 case TrueTypeInstructionOpcode.RoundToHalfGrid: trueTypeGraphicsState.RoundingMode = TrueTypeRoundingMode.ToHalfGrid; break;
+                case TrueTypeInstructionOpcode.RoundToDoubleGrid: trueTypeGraphicsState.RoundingMode = TrueTypeRoundingMode.ToDoubleGrid; break;
+                case TrueTypeInstructionOpcode.SetSuperRound: return ExecuteSetSuperRound(false, trueTypeOperandStack, trueTypeGraphicsState, out trueTypeProgramFailure);
+                case TrueTypeInstructionOpcode.SetSuper45Round: return ExecuteSetSuperRound(true, trueTypeOperandStack, trueTypeGraphicsState, out trueTypeProgramFailure);
                 case TrueTypeInstructionOpcode.RoundOff: trueTypeGraphicsState.RoundingMode = TrueTypeRoundingMode.Off; break;
                 case TrueTypeInstructionOpcode.RoundUpToGrid: trueTypeGraphicsState.RoundingMode = TrueTypeRoundingMode.UpToGrid; break;
                 case TrueTypeInstructionOpcode.RoundDownToGrid: trueTypeGraphicsState.RoundingMode = TrueTypeRoundingMode.DownToGrid; break;
                 case TrueTypeInstructionOpcode.RoundGrayDistance:
                 case TrueTypeInstructionOpcode.RoundBlackDistance:
                 case TrueTypeInstructionOpcode.RoundWhiteDistance:
-                case TrueTypeInstructionOpcode.RoundReservedDistance: return ExecuteUnary(trueTypeOperandStack, value => RoundF26Dot6(value, trueTypeGraphicsState.RoundingMode), out trueTypeProgramFailure);
+                case TrueTypeInstructionOpcode.RoundReservedDistance: return ExecuteUnary(trueTypeOperandStack, value => TrueTypeHintingGeometryOperations.RoundF26Dot6(value, trueTypeGraphicsState), out trueTypeProgramFailure);
                 case TrueTypeInstructionOpcode.NoRoundGrayDistance:
                 case TrueTypeInstructionOpcode.NoRoundBlackDistance:
                 case TrueTypeInstructionOpcode.NoRoundWhiteDistance:
@@ -152,11 +179,14 @@ namespace StbTrueTypeSharp.TrueTypeHinting.VirtualMachine
                 case TrueTypeInstructionOpcode.SetMinimumDistance: return PopReferencePoint(trueTypeOperandStack, value => trueTypeGraphicsState.MinimumDistanceF26Dot6 = value, out trueTypeProgramFailure);
                 case TrueTypeInstructionOpcode.SetControlValueCutIn: return PopReferencePoint(trueTypeOperandStack, value => trueTypeGraphicsState.ControlValueCutInF26Dot6 = value, out trueTypeProgramFailure);
                 case TrueTypeInstructionOpcode.SetSingleWidthCutIn: return PopReferencePoint(trueTypeOperandStack, value => trueTypeGraphicsState.SingleWidthCutInF26Dot6 = value, out trueTypeProgramFailure);
-                case TrueTypeInstructionOpcode.SetSingleWidth: return PopReferencePoint(trueTypeOperandStack, value => trueTypeGraphicsState.SingleWidthValueF26Dot6 = value, out trueTypeProgramFailure);
+                case TrueTypeInstructionOpcode.SetSingleWidth: return ExecuteSetSingleWidth(trueTypeOperandStack, trueTypeVirtualMachineState, out trueTypeProgramFailure);
                 case TrueTypeInstructionOpcode.SetDeltaBase: return PopReferencePoint(trueTypeOperandStack, value => trueTypeGraphicsState.DeltaBasePpem = value, out trueTypeProgramFailure);
-                case TrueTypeInstructionOpcode.SetDeltaShift: return PopReferencePoint(trueTypeOperandStack, value => trueTypeGraphicsState.DeltaShift = value, out trueTypeProgramFailure);
+                case TrueTypeInstructionOpcode.SetDeltaShift: return ExecuteSetDeltaShift(trueTypeOperandStack, trueTypeGraphicsState, out trueTypeProgramFailure);
                 case TrueTypeInstructionOpcode.FlipOn: trueTypeGraphicsState.AutoFlip = true; break;
                 case TrueTypeInstructionOpcode.FlipOff: trueTypeGraphicsState.AutoFlip = false; break;
+                case TrueTypeInstructionOpcode.Debug: return trueTypeOperandStack.TryPop(out _, out trueTypeProgramFailure);
+                case TrueTypeInstructionOpcode.Odd: return ExecuteParityTest(true, trueTypeOperandStack, trueTypeGraphicsState, out trueTypeProgramFailure);
+                case TrueTypeInstructionOpcode.Even: return ExecuteParityTest(false, trueTypeOperandStack, trueTypeGraphicsState, out trueTypeProgramFailure);
                 case TrueTypeInstructionOpcode.MeasurePixelsPerEm: return trueTypeOperandStack.TryPush(trueTypeVirtualMachineState.RasterizerEnvironment.DevicePpemY.Value, out trueTypeProgramFailure);
                 case TrueTypeInstructionOpcode.MeasurePointSize: return trueTypeOperandStack.TryPush(trueTypeVirtualMachineState.RasterizerEnvironment.PointSizeF26Dot6, out trueTypeProgramFailure);
                 case TrueTypeInstructionOpcode.GetInformation: return ExecuteGetInformation(trueTypeOperandStack, trueTypeVirtualMachineState.RasterizerEnvironment, out trueTypeProgramFailure);
@@ -169,6 +199,7 @@ namespace StbTrueTypeSharp.TrueTypeHinting.VirtualMachine
                 case TrueTypeInstructionOpcode.MoveIndirectAbsolutePointWithRounding: return ExecuteMoveIndirectAbsolutePoint(true, trueTypeExecutionContext, out trueTypeProgramFailure);
                 case TrueTypeInstructionOpcode.MoveStackIndirectRelativePointKeepReference: return ExecuteMoveStackIndirectRelativePoint(false, trueTypeExecutionContext, out trueTypeProgramFailure);
                 case TrueTypeInstructionOpcode.MoveStackIndirectRelativePointSetReference: return ExecuteMoveStackIndirectRelativePoint(true, trueTypeExecutionContext, out trueTypeProgramFailure);
+                case TrueTypeInstructionOpcode.UntouchPoint: return ExecuteUntouchPoint(trueTypeExecutionContext, out trueTypeProgramFailure);
                 case TrueTypeInstructionOpcode.GetCurrentCoordinate: return ExecuteGetCoordinate(false, trueTypeExecutionContext, out trueTypeProgramFailure);
                 case TrueTypeInstructionOpcode.GetOriginalCoordinate: return ExecuteGetCoordinate(true, trueTypeExecutionContext, out trueTypeProgramFailure);
                 case TrueTypeInstructionOpcode.SetCoordinateFromStack: return ExecuteSetCoordinateFromStack(trueTypeExecutionContext, out trueTypeProgramFailure);
@@ -181,10 +212,18 @@ namespace StbTrueTypeSharp.TrueTypeHinting.VirtualMachine
                     if (!TryRequireExecutionZones(trueTypeExecutionContext, out trueTypeProgramFailure)) return false;
                     TrueTypeHintingGeometryOperations.InterpolateUntouchedPoints(trueTypeExecutionContext.ExecutionZones.GlyphZone, false); break;
                 case TrueTypeInstructionOpcode.InterpolatePoints: return ExecuteInterpolatePoints(trueTypeExecutionContext, out trueTypeProgramFailure);
+                case TrueTypeInstructionOpcode.AlignPoints: return ExecuteAlignPoints(trueTypeExecutionContext, out trueTypeProgramFailure);
                 case TrueTypeInstructionOpcode.AlignRelativePoints: return ExecuteAlignRelativePoints(trueTypeExecutionContext, out trueTypeProgramFailure);
                 case TrueTypeInstructionOpcode.ShiftPointsUsingReferencePointTwo: return ExecuteShiftPoints(false, trueTypeExecutionContext, out trueTypeProgramFailure);
                 case TrueTypeInstructionOpcode.ShiftPointsUsingReferencePointOne: return ExecuteShiftPoints(true, trueTypeExecutionContext, out trueTypeProgramFailure);
+                case TrueTypeInstructionOpcode.ShiftContourUsingReferencePointTwo: return ExecuteShiftContour(false, trueTypeExecutionContext, out trueTypeProgramFailure);
+                case TrueTypeInstructionOpcode.ShiftContourUsingReferencePointOne: return ExecuteShiftContour(true, trueTypeExecutionContext, out trueTypeProgramFailure);
+                case TrueTypeInstructionOpcode.ShiftZoneUsingReferencePointTwo: return ExecuteShiftZone(false, trueTypeExecutionContext, out trueTypeProgramFailure);
+                case TrueTypeInstructionOpcode.ShiftZoneUsingReferencePointOne: return ExecuteShiftZone(true, trueTypeExecutionContext, out trueTypeProgramFailure);
                 case TrueTypeInstructionOpcode.ShiftPointsByPixelAmount: return ExecuteShiftPointsByPixelAmount(trueTypeExecutionContext, out trueTypeProgramFailure);
+                case TrueTypeInstructionOpcode.FlipPoints: return ExecuteFlipPoints(trueTypeExecutionContext, out trueTypeProgramFailure);
+                case TrueTypeInstructionOpcode.SetPointRangeOnCurve: return ExecuteSetPointRangeCurveState(true, trueTypeExecutionContext, out trueTypeProgramFailure);
+                case TrueTypeInstructionOpcode.SetPointRangeOffCurve: return ExecuteSetPointRangeCurveState(false, trueTypeExecutionContext, out trueTypeProgramFailure);
                 case TrueTypeInstructionOpcode.DeltaPointOne: return ExecuteDeltaPoints(trueTypeExecutionContext, 0, out trueTypeProgramFailure);
                 case TrueTypeInstructionOpcode.DeltaPointTwo: return ExecuteDeltaPoints(trueTypeExecutionContext, 16, out trueTypeProgramFailure);
                 case TrueTypeInstructionOpcode.DeltaPointThree: return ExecuteDeltaPoints(trueTypeExecutionContext, 32, out trueTypeProgramFailure);
@@ -298,6 +337,19 @@ namespace StbTrueTypeSharp.TrueTypeHinting.VirtualMachine
             TrueTypeExecutionContext context, out TrueTypeVirtualMachineFailure failure)
             => TrueTypePointInstructionExecutor.ExecuteMoveStackIndirectRelativePoint(setReferencePointZero, context, out failure);
 
+        private static bool ExecuteSetVectorToLine(bool setProjectionVector, bool setDualProjectionVector,
+            bool perpendicular, TrueTypeExecutionContext context, out TrueTypeVirtualMachineFailure failure)
+            => TrueTypePointInstructionExecutor.ExecuteSetVectorToLine(setProjectionVector, setDualProjectionVector,
+                perpendicular, context, out failure);
+
+        private static bool ExecuteAlignPoints(TrueTypeExecutionContext context,
+            out TrueTypeVirtualMachineFailure failure)
+            => TrueTypePointInstructionExecutor.ExecuteAlignPoints(context, out failure);
+
+        private static bool ExecuteIntersectLines(TrueTypeExecutionContext context,
+            out TrueTypeVirtualMachineFailure failure)
+            => TrueTypePointInstructionExecutor.ExecuteIntersectLines(context, out failure);
+
         private static bool ExecuteGetCoordinate(bool original, TrueTypeExecutionContext context,
             out TrueTypeVirtualMachineFailure failure)
             => TrueTypePointInstructionExecutor.ExecuteGetCoordinate(original, context, out failure);
@@ -322,9 +374,29 @@ namespace StbTrueTypeSharp.TrueTypeHinting.VirtualMachine
             out TrueTypeVirtualMachineFailure failure)
             => TrueTypePointInstructionExecutor.ExecuteShiftPoints(useReferencePointOne, context, out failure);
 
+        private static bool ExecuteShiftContour(bool useReferencePointOne, TrueTypeExecutionContext context,
+            out TrueTypeVirtualMachineFailure failure)
+            => TrueTypePointInstructionExecutor.ExecuteShiftContour(useReferencePointOne, context, out failure);
+
+        private static bool ExecuteShiftZone(bool useReferencePointOne, TrueTypeExecutionContext context,
+            out TrueTypeVirtualMachineFailure failure)
+            => TrueTypePointInstructionExecutor.ExecuteShiftZone(useReferencePointOne, context, out failure);
+
         private static bool ExecuteShiftPointsByPixelAmount(TrueTypeExecutionContext context,
             out TrueTypeVirtualMachineFailure failure)
             => TrueTypePointInstructionExecutor.ExecuteShiftPointsByPixelAmount(context, out failure);
+
+        private static bool ExecuteUntouchPoint(TrueTypeExecutionContext context,
+            out TrueTypeVirtualMachineFailure failure)
+            => TrueTypePointInstructionExecutor.ExecuteUntouchPoint(context, out failure);
+
+        private static bool ExecuteFlipPoints(TrueTypeExecutionContext context,
+            out TrueTypeVirtualMachineFailure failure)
+            => TrueTypePointInstructionExecutor.ExecuteFlipPoints(context, out failure);
+
+        private static bool ExecuteSetPointRangeCurveState(bool onCurve, TrueTypeExecutionContext context,
+            out TrueTypeVirtualMachineFailure failure)
+            => TrueTypePointInstructionExecutor.ExecuteSetPointRangeCurveState(onCurve, context, out failure);
 
         private static bool ExecuteDeltaPoints(TrueTypeExecutionContext context, int ppemBias,
             out TrueTypeVirtualMachineFailure failure)
@@ -367,6 +439,28 @@ namespace StbTrueTypeSharp.TrueTypeHinting.VirtualMachine
             return state.TryWriteControlValue(index, state.ScaleFontUnitsToF26Dot6(fontUnitValue), out failure);
         }
 
+        private static bool ExecuteSetDeltaShift(TrueTypeOperandStack stack, TrueTypeGraphicsState state,
+            out TrueTypeVirtualMachineFailure failure)
+        {
+            if (!stack.TryPop(out int deltaShiftValue, out failure)) return false;
+            if (deltaShiftValue < 0 || deltaShiftValue > 6)
+            {
+                failure = Failure(TrueTypeVirtualMachineFailureCode.InvalidGraphicsStateValue,
+                    "SDS delta_shift must be in the inclusive range zero through six.");
+                return false;
+            }
+            state.DeltaShift = deltaShiftValue;
+            return Success(out failure);
+        }
+
+        private static bool ExecuteSetSingleWidth(TrueTypeOperandStack stack, TrueTypeVirtualMachineState state,
+            out TrueTypeVirtualMachineFailure failure)
+        {
+            if (!stack.TryPop(out int singleWidthFontUnits, out failure)) return false;
+            state.GraphicsState.SingleWidthValueF26Dot6 = state.ScaleFontUnitsToF26Dot6(singleWidthFontUnits);
+            return Success(out failure);
+        }
+
         private static bool ExecuteDeltaControlValue(TrueTypeOperandStack stack, TrueTypeVirtualMachineState state,
             int deltaPpemBias, out TrueTypeVirtualMachineFailure failure)
         {
@@ -383,9 +477,7 @@ namespace StbTrueTypeSharp.TrueTypeHinting.VirtualMachine
                     !stack.TryPop(out int packedDeltaArgument, out failure)) return false;
                 int targetPpem = ((packedDeltaArgument >> 4) & 0x0F) + state.GraphicsState.DeltaBasePpem + deltaPpemBias;
                 if (targetPpem != state.RasterizerEnvironment.DevicePpemY.Value) continue;
-                int deltaStep = (packedDeltaArgument & 0x0F) - 8;
-                if (deltaStep >= 0) deltaStep++;
-                int deltaF26Dot6 = deltaStep * (1 << Math.Max(0, 6 - state.GraphicsState.DeltaShift));
+                int deltaF26Dot6 = TrueTypeDeltaState.DecodeDistanceF26Dot6(packedDeltaArgument, state.GraphicsState.DeltaShift);
                 if (!state.TryReadControlValue(controlValueIndex, out int currentControlValue, out failure) ||
                     !state.TryWriteControlValue(controlValueIndex, currentControlValue + deltaF26Dot6, out failure)) return false;
             }
@@ -431,16 +523,29 @@ namespace StbTrueTypeSharp.TrueTypeHinting.VirtualMachine
             }
         }
 
-        private static int RoundF26Dot6(int valueF26Dot6, TrueTypeRoundingMode roundingMode)
+        private static bool ExecuteParityTest(bool testOdd, TrueTypeOperandStack stack,
+            TrueTypeGraphicsState graphicsState, out TrueTypeVirtualMachineFailure failure)
         {
-            switch (roundingMode)
+            if (!stack.TryPop(out int valueF26Dot6, out failure)) return false;
+            int roundedValueF26Dot6 = TrueTypeHintingGeometryOperations.RoundF26Dot6(valueF26Dot6, graphicsState);
+            bool roundedValueIsOdd = (Math.Abs(roundedValueF26Dot6 / 64) & 1) != 0;
+            return stack.TryPush(roundedValueIsOdd == testOdd ? 1 : 0, out failure);
+        }
+
+        private static bool ExecuteSetSuperRound(bool fortyFiveDegreeGrid, TrueTypeOperandStack stack,
+            TrueTypeGraphicsState state, out TrueTypeVirtualMachineFailure failure)
+        {
+            if (!stack.TryPop(out int encodedRoundingParameters, out failure)) return false;
+            if (!TrueTypeSuperRoundingState.TryDecode(encodedRoundingParameters & 0xFF, fortyFiveDegreeGrid,
+                    out TrueTypeSuperRoundingState superRoundingState))
             {
-                case TrueTypeRoundingMode.Off: return valueF26Dot6;
-                case TrueTypeRoundingMode.DownToGrid: return valueF26Dot6 >= 0 ? valueF26Dot6 & ~63 : -((-valueF26Dot6 + 63) & ~63);
-                case TrueTypeRoundingMode.UpToGrid: return valueF26Dot6 >= 0 ? (valueF26Dot6 + 63) & ~63 : -((-valueF26Dot6) & ~63);
-                case TrueTypeRoundingMode.ToHalfGrid: return valueF26Dot6 >= 0 ? ((valueF26Dot6 + 32) & ~63) + 32 : -(((-valueF26Dot6 + 32) & ~63) + 32);
-                default: return valueF26Dot6 >= 0 ? (valueF26Dot6 + 32) & ~63 : -((-valueF26Dot6 + 32) & ~63);
+                failure = Failure(TrueTypeVirtualMachineFailureCode.InvalidFunctionDefinition,
+                    "SROUND reserved period selector 3 is invalid.");
+                return false;
             }
+            state.SuperRoundingState = superRoundingState;
+            state.RoundingMode = fortyFiveDegreeGrid ? TrueTypeRoundingMode.Super45 : TrueTypeRoundingMode.Super;
+            return Success(out failure);
         }
 
         private static void SetBothVectors(TrueTypeGraphicsState state, TrueTypeUnitVector vector) { SetProjectionVector(state, vector); state.FreedomVector = vector; }

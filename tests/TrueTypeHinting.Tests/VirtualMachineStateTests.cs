@@ -159,6 +159,139 @@ namespace TrueTypeHinting.Tests
         }
 
         [Fact]
+        public void SuperRoundDecodesPeriodPhaseThresholdAndRoundsSignedValues()
+        {
+            TrueTypeVirtualMachineState machineState = TrueTypeVirtualMachineState.ForTests();
+            TrueTypeVirtualMachineResult result = Interpreter().Execute(new byte[]
+            {
+                0xB0, 0x48, // period=1px, phase=0, threshold=1/2 period
+                (byte)TrueTypeInstructionOpcode.SetSuperRound,
+                0xB8, 0x00, 0x5F,
+                (byte)TrueTypeInstructionOpcode.RoundGrayDistance,
+                0xB8, 0xFF, 0xA1,
+                (byte)TrueTypeInstructionOpcode.RoundGrayDistance,
+            }, machineState);
+
+            Assert.True(result.Succeeded, result.Failure.ToString());
+            Assert.Equal(TrueTypeRoundingMode.Super, machineState.GraphicsState.RoundingMode);
+            Assert.Equal(64, machineState.GraphicsState.SuperRoundingState.PeriodF26Dot6);
+            Assert.Equal(0, machineState.GraphicsState.SuperRoundingState.PhaseF26Dot6);
+            Assert.Equal(32, machineState.GraphicsState.SuperRoundingState.ThresholdF26Dot6);
+            Assert.Equal(new[] { 64, -64 }, Values(result));
+        }
+
+        [Fact]
+        public void SuperRoundHonorsQuarterPhaseAndCeilingThreshold()
+        {
+            TrueTypeVirtualMachineState machineState = TrueTypeVirtualMachineState.ForTests();
+            TrueTypeVirtualMachineResult result = Interpreter().Execute(new byte[]
+            {
+                0xB0, 0x50, // period=1px, phase=1/4, threshold=period-1
+                (byte)TrueTypeInstructionOpcode.SetSuperRound,
+                0xB8, 0x00, 0x11,
+                (byte)TrueTypeInstructionOpcode.RoundGrayDistance,
+                0xB8, 0xFF, 0xEF,
+                (byte)TrueTypeInstructionOpcode.RoundGrayDistance,
+            }, machineState);
+
+            Assert.True(result.Succeeded, result.Failure.ToString());
+            Assert.Equal(16, machineState.GraphicsState.SuperRoundingState.PhaseF26Dot6);
+            Assert.Equal(63, machineState.GraphicsState.SuperRoundingState.ThresholdF26Dot6);
+            Assert.Equal(new[] { 80, -80 }, Values(result));
+        }
+
+        [Fact]
+        public void Super45RoundUsesSqrtHalfPixelGridPeriod()
+        {
+            TrueTypeVirtualMachineState machineState = TrueTypeVirtualMachineState.ForTests();
+            TrueTypeVirtualMachineResult result = Interpreter().Execute(new byte[]
+            {
+                0xB0, 0x48,
+                (byte)TrueTypeInstructionOpcode.SetSuper45Round,
+                0xB8, 0x00, 0x2C,
+                (byte)TrueTypeInstructionOpcode.RoundGrayDistance,
+            }, machineState);
+
+            Assert.True(result.Succeeded, result.Failure.ToString());
+            Assert.Equal(TrueTypeRoundingMode.Super45, machineState.GraphicsState.RoundingMode);
+            Assert.Equal(45, machineState.GraphicsState.SuperRoundingState.PeriodF26Dot6);
+            Assert.Equal(22, machineState.GraphicsState.SuperRoundingState.ThresholdF26Dot6);
+            Assert.Equal(new[] { 45 }, Values(result));
+        }
+
+        [Fact]
+        public void SuperRoundRejectsReservedPeriodSelector()
+        {
+            TrueTypeVirtualMachineResult result = Interpreter().Execute(new byte[]
+            {
+                0xB0, 0xC8,
+                (byte)TrueTypeInstructionOpcode.SetSuperRound,
+            });
+
+            Assert.False(result.Succeeded);
+            Assert.Equal(TrueTypeVirtualMachineFailureCode.InvalidFunctionDefinition, result.Failure.FailureCode);
+        }
+
+        [Theory]
+        [InlineData(0, 0, 512)]
+        [InlineData(3, 0, 64)]
+        [InlineData(6, 0, 8)]
+        [InlineData(6, 15, 8)]
+        public void DeltaControlValueUsesExactLegalDeltaShiftRange(int deltaShift, int encodedStepNibble,
+            int expectedMagnitudeF26Dot6)
+        {
+            int packedDeltaArgument = 0x70 | encodedStepNibble; // 7 + delta_base 9 = 16ppem
+            TrueTypeVirtualMachineState machineState = TrueTypeVirtualMachineState.ForTests(4, 100);
+            TrueTypeVirtualMachineResult result = Interpreter().Execute(new byte[]
+            {
+                0xB0, (byte)deltaShift,
+                (byte)TrueTypeInstructionOpcode.SetDeltaShift,
+                0xB2, (byte)packedDeltaArgument, 0, 1, // argument, CVT index, count
+                (byte)TrueTypeInstructionOpcode.DeltaControlValueOne,
+                0xB0, 0,
+                (byte)TrueTypeInstructionOpcode.ReadControlValue,
+            }, machineState);
+
+            Assert.True(result.Succeeded, result.Failure.ToString());
+            int expectedSign = encodedStepNibble < 8 ? -1 : 1;
+            Assert.Equal(new[] { 100 + expectedSign * expectedMagnitudeF26Dot6 }, Values(result));
+        }
+
+        [Theory]
+        [InlineData(-1)]
+        [InlineData(7)]
+        public void SetDeltaShiftRejectsValuesOutsideZeroThroughSix(int invalidDeltaShift)
+        {
+            byte[] pushInvalidValue = invalidDeltaShift < 0
+                ? new byte[] { 0xB8, 0xFF, 0xFF }
+                : new byte[] { 0xB0, (byte)invalidDeltaShift };
+            var program = new byte[pushInvalidValue.Length + 1];
+            System.Buffer.BlockCopy(pushInvalidValue, 0, program, 0, pushInvalidValue.Length);
+            program[program.Length - 1] = (byte)TrueTypeInstructionOpcode.SetDeltaShift;
+
+            TrueTypeVirtualMachineResult result = Interpreter().Execute(program);
+
+            Assert.False(result.Succeeded);
+            Assert.Equal(TrueTypeVirtualMachineFailureCode.InvalidGraphicsStateValue, result.Failure.FailureCode);
+        }
+
+        [Fact]
+        public void DeltaControlValueConsumesNonMatchingPpemPairWithoutTouchingInvalidIndex()
+        {
+            TrueTypeVirtualMachineState machineState = TrueTypeVirtualMachineState.ForTests(1, 100);
+            TrueTypeVirtualMachineResult result = Interpreter().Execute(new byte[]
+            {
+                0xB2, 0x08, 99, 1, // target 9ppem, invalid CVT index, count
+                (byte)TrueTypeInstructionOpcode.DeltaControlValueOne,
+                0xB0, 0,
+                (byte)TrueTypeInstructionOpcode.ReadControlValue,
+            }, machineState);
+
+            Assert.True(result.Succeeded, result.Failure.ToString());
+            Assert.Equal(new[] { 100 }, Values(result));
+        }
+
+        [Fact]
         public void DuplicateDefinitionsFailDeterministically()
         {
             TrueTypeVirtualMachineResult result = Interpreter().Execute(new byte[]

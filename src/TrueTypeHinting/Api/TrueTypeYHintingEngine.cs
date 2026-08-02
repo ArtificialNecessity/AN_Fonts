@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using StbTrueTypeSharp.TrueTypeHinting.Diagnostics;
 using StbTrueTypeSharp.TrueTypeHinting.FontFace;
 using StbTrueTypeSharp.TrueTypeHinting.SizeInstance;
 
@@ -191,6 +192,10 @@ namespace StbTrueTypeSharp.TrueTypeHinting
         /// <summary>Parses and executes one simple TrueType glyph using a prepared ppem instance.</summary>
         public TrueTypeYHintingResult HintGlyph(TrueTypeHintingSizeInstance trueTypeHintingSizeInstance,
             TrueTypeGlyphIndex trueTypeGlyphIndex)
+            => HintGlyph(trueTypeHintingSizeInstance, trueTypeGlyphIndex, null);
+
+        internal TrueTypeYHintingResult HintGlyph(TrueTypeHintingSizeInstance trueTypeHintingSizeInstance,
+            TrueTypeGlyphIndex trueTypeGlyphIndex, TrueTypeHintingExecutionTrace trueTypeHintingExecutionTrace)
         {
             if (trueTypeHintingSizeInstance == null) throw new ArgumentNullException(nameof(trueTypeHintingSizeInstance));
             if (!Geometry.TrueTypeSimpleGlyphParser.TryParse(trueTypeHintingSizeInstance.TrueTypeHintingFontFace,
@@ -208,7 +213,8 @@ namespace StbTrueTypeSharp.TrueTypeHinting
                 VirtualMachine.TrueTypeExecutionLimits.FromMaximumProfile(
                     trueTypeHintingSizeInstance.TrueTypeHintingFontFace.MaximumProfile));
             VirtualMachine.TrueTypeVirtualMachineResult glyphExecutionResult = interpreter.Execute(
-                trueTypeHintingGlyphInput.GlyphInstructionBytes.ToByteArray(), glyphVirtualMachineState, executionZones);
+                trueTypeHintingGlyphInput.GlyphInstructionBytes.ToByteArray(), glyphVirtualMachineState,
+                executionZones, trueTypeHintingExecutionTrace);
             if (!glyphExecutionResult.Succeeded)
                 return TrueTypeYHintingResult.Failed(Failure(TrueTypeHintingFailureCode.InterpreterNotImplemented,
                     "Glyph instruction execution failed: " + glyphExecutionResult.Failure));

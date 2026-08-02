@@ -48,6 +48,46 @@ namespace StbTrueTypeSharp.TrueTypeHinting.Geometry
             => Project(firstPoint.OriginalHorizontalF26Dot6 - secondPoint.OriginalHorizontalF26Dot6,
                 firstPoint.OriginalVerticalF26Dot6 - secondPoint.OriginalVerticalF26Dot6, dualProjectionVector);
 
+        internal static bool TryCreateCurrentLineUnitVector(TrueTypeHintingPoint firstPoint,
+            TrueTypeHintingPoint secondPoint, bool perpendicular, out TrueTypeUnitVector lineUnitVector,
+            out TrueTypeVirtualMachineFailure geometryFailure)
+            => TryCreateLineUnitVector(
+                secondPoint.CurrentHorizontalF26Dot6 - firstPoint.CurrentHorizontalF26Dot6,
+                secondPoint.CurrentVerticalF26Dot6 - firstPoint.CurrentVerticalF26Dot6,
+                perpendicular, out lineUnitVector, out geometryFailure);
+
+        internal static bool TryCreateOriginalLineUnitVector(TrueTypeHintingPoint firstPoint,
+            TrueTypeHintingPoint secondPoint, bool perpendicular, out TrueTypeUnitVector lineUnitVector,
+            out TrueTypeVirtualMachineFailure geometryFailure)
+            => TryCreateLineUnitVector(
+                secondPoint.OriginalHorizontalF26Dot6 - firstPoint.OriginalHorizontalF26Dot6,
+                secondPoint.OriginalVerticalF26Dot6 - firstPoint.OriginalVerticalF26Dot6,
+                perpendicular, out lineUnitVector, out geometryFailure);
+
+        private static bool TryCreateLineUnitVector(int horizontalDifferenceF26Dot6, int verticalDifferenceF26Dot6,
+            bool perpendicular, out TrueTypeUnitVector lineUnitVector, out TrueTypeVirtualMachineFailure geometryFailure)
+        {
+            long squaredLength = (long)horizontalDifferenceF26Dot6 * horizontalDifferenceF26Dot6 +
+                (long)verticalDifferenceF26Dot6 * verticalDifferenceF26Dot6;
+            if (squaredLength == 0)
+            {
+                lineUnitVector = default;
+                geometryFailure = Failure(TrueTypeVirtualMachineFailureCode.InvalidFreedomProjectionVectors,
+                    "A line-derived TrueType vector requires two distinct point positions.");
+                return false;
+            }
+            double lineLength = Math.Sqrt(squaredLength);
+            int horizontalComponent = (int)Math.Round(horizontalDifferenceF26Dot6 * 16384.0 / lineLength,
+                MidpointRounding.AwayFromZero);
+            int verticalComponent = (int)Math.Round(verticalDifferenceF26Dot6 * 16384.0 / lineLength,
+                MidpointRounding.AwayFromZero);
+            lineUnitVector = perpendicular
+                ? new TrueTypeUnitVector(new TrueTypeVectorComponent(-verticalComponent), new TrueTypeVectorComponent(horizontalComponent))
+                : new TrueTypeUnitVector(new TrueTypeVectorComponent(horizontalComponent), new TrueTypeVectorComponent(verticalComponent));
+            geometryFailure = default;
+            return true;
+        }
+
         internal static bool TryMovePointByProjectedDistance(TrueTypeHintingPoint hintingPoint, int projectedDistanceF26Dot6,
             TrueTypeGraphicsState graphicsState, out TrueTypeVirtualMachineFailure geometryFailure)
         {
@@ -75,18 +115,35 @@ namespace StbTrueTypeSharp.TrueTypeHinting.Geometry
             return true;
         }
 
-        internal static int RoundF26Dot6(int valueF26Dot6, TrueTypeRoundingMode roundingMode)
+        internal static int RoundF26Dot6(int valueF26Dot6, TrueTypeGraphicsState graphicsState)
         {
-            switch (roundingMode)
+            switch (graphicsState.RoundingMode)
             {
                 case TrueTypeRoundingMode.Off: return valueF26Dot6;
                 case TrueTypeRoundingMode.DownToGrid: return valueF26Dot6 >= 0 ? valueF26Dot6 & ~63 : -((-valueF26Dot6 + 63) & ~63);
                 case TrueTypeRoundingMode.UpToGrid: return valueF26Dot6 >= 0 ? (valueF26Dot6 + 63) & ~63 : -((-valueF26Dot6) & ~63);
                 case TrueTypeRoundingMode.ToHalfGrid: return valueF26Dot6 >= 0 ? ((valueF26Dot6 + 32) & ~63) + 32 : -(((-valueF26Dot6 + 32) & ~63) + 32);
                 case TrueTypeRoundingMode.ToDoubleGrid: return valueF26Dot6 >= 0 ? (valueF26Dot6 + 16) & ~31 : -((-valueF26Dot6 + 16) & ~31);
+                case TrueTypeRoundingMode.Super:
+                case TrueTypeRoundingMode.Super45:
+                    return RoundSuperF26Dot6(valueF26Dot6, graphicsState.SuperRoundingState);
                 default: return valueF26Dot6 >= 0 ? (valueF26Dot6 + 32) & ~63 : -((-valueF26Dot6 + 32) & ~63);
             }
         }
+
+        private static int RoundSuperF26Dot6(int valueF26Dot6, TrueTypeSuperRoundingState superRoundingState)
+        {
+            int valueSign = valueF26Dot6 < 0 ? -1 : 1;
+            long absoluteValue = Math.Abs((long)valueF26Dot6);
+            long adjustedValue = absoluteValue + superRoundingState.ThresholdF26Dot6 - superRoundingState.PhaseF26Dot6;
+            long roundedMagnitude = FloorDivide(adjustedValue, superRoundingState.PeriodF26Dot6) *
+                superRoundingState.PeriodF26Dot6 + superRoundingState.PhaseF26Dot6;
+            if (roundedMagnitude < 0) roundedMagnitude = 0;
+            return (int)(valueSign * roundedMagnitude);
+        }
+
+        private static long FloorDivide(long numerator, long positiveDenominator)
+            => numerator >= 0 ? numerator / positiveDenominator : -((-numerator + positiveDenominator - 1) / positiveDenominator);
 
         internal static void InterpolateUntouchedPoints(TrueTypeHintingZone hintingZone, bool verticalAxis)
         {
