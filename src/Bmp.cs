@@ -4,7 +4,7 @@ using static StbTrueTypeSharp.Common;
 namespace StbTrueTypeSharp
 {
 	/// <summary>
-	/// Y-only grid-fit remap (SilkyNvg plans/crisp_text_yonly_gridfit_hinting.md):
+	/// Y-only grid-fit remap (SilkyNvg plans/crisp_text_yonly_autofit_gridfit.md):
 	/// a MONOTONIC mapping over y-UP pixel space (baseline = 0, ascenders positive,
 	/// i.e. fontUnitsY * scale_y BEFORE bitmap inversion). Applied to every
 	/// FLATTENED outline point right before edges are built, so a piecewise-linear

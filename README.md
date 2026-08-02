@@ -16,7 +16,7 @@ Everything after upstream commit `2f76ecb` (2020) is ours:
 |---|---|
 | **OTF/CFF fixes** | Corrected CFF/CharString parsing bugs and multi-component (composite) glyph handling; added OTF test fonts. |
 | **Full GPOS pair kerning** | Replaced stb_truetype's minimal GPOS stub with a proper pair-kerning kernel: script/feature selection, Extension lookups, full ValueRecord layout, class-0 handling. Validated against a numeric HarfBuzz oracle (`tests/GposKerning.Tests`). |
-| **Y-only grid-fit raster** | `stbtt_YPixelGridFitRemap` entry points: a monotonic y-remap applied during rasterization for crisp horizontal stems (see SilkyNvg `plans/crisp_text_yonly_gridfit_hinting.md`) without touching x-spacing. |
+| **Y-only autofit raster** | `stbtt_YPixelGridFitRemap` entry points: a monotonic y-remap applied during rasterization for crisp horizontal stems (see SilkyNvg `plans/crisp_text_yonly_autofit_gridfit.md`) without touching x-spacing. This is custom autofit, not TrueType instruction execution. |
 | **Synthetic styles** | Outline-preprocessing synthesis: fake-bold via stroke-union embolden, oblique shear, and horizontal scaling (`FontInfoSynth.cs`). |
 | **Hygiene** | Removed the dead upstream MonoGame sample; restructured `tests/` into per-project subdirectories. |
 
