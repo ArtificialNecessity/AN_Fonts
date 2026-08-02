@@ -133,6 +133,89 @@ namespace TrueTypeHinting.Tests
             Assert.Equal(TrueTypeVirtualMachineFailureCode.InvalidControlValueIndex, cvtResult.Failure.FailureCode);
         }
 
+        [Theory]
+        [InlineData((byte)TrueTypeInstructionOpcode.SetZonePointerZero)]
+        [InlineData((byte)TrueTypeInstructionOpcode.SetZonePointerOne)]
+        [InlineData((byte)TrueTypeInstructionOpcode.SetZonePointerTwo)]
+        [InlineData((byte)TrueTypeInstructionOpcode.SetAllZonePointers)]
+        public void ZonePointerSettersRejectValuesOtherThanZeroOrOne(byte zonePointerOpcode)
+        {
+            TrueTypeVirtualMachineResult result = Interpreter().Execute(new byte[]
+            {
+                0xB0, 2,
+                zonePointerOpcode,
+            });
+
+            Assert.False(result.Succeeded);
+            Assert.Equal(TrueTypeVirtualMachineFailureCode.InvalidZonePointer, result.Failure.FailureCode);
+        }
+
+        [Fact]
+        public void SetAllZonePointersAssignsAllThreePointersAtomically()
+        {
+            TrueTypeVirtualMachineState machineState = TrueTypeVirtualMachineState.ForTests();
+            TrueTypeVirtualMachineResult result = Interpreter().Execute(new byte[]
+            {
+                0xB0, 0,
+                (byte)TrueTypeInstructionOpcode.SetAllZonePointers,
+            }, machineState);
+
+            Assert.True(result.Succeeded, result.Failure.ToString());
+            Assert.Equal(0, machineState.GraphicsState.ZonePointerZero.Value);
+            Assert.Equal(0, machineState.GraphicsState.ZonePointerOne.Value);
+            Assert.Equal(0, machineState.GraphicsState.ZonePointerTwo.Value);
+        }
+
+        [Fact]
+        public void SetLoopCountRejectsNegativeValue()
+        {
+            TrueTypeVirtualMachineResult result = Interpreter().Execute(new byte[]
+            {
+                0xB8, 0xFF, 0xFF,
+                (byte)TrueTypeInstructionOpcode.SetLoopCount,
+            });
+
+            Assert.False(result.Succeeded);
+            Assert.Equal(TrueTypeVirtualMachineFailureCode.InvalidGraphicsStateValue, result.Failure.FailureCode);
+        }
+
+        [Fact]
+        public void SetLoopCountClampsLargeValuesToUnsignedSixteenBitMaximum()
+        {
+            TrueTypeVirtualMachineState machineState = TrueTypeVirtualMachineState.ForTests();
+            TrueTypeVirtualMachineResult result = Interpreter().Execute(new byte[]
+            {
+                0xB8, 0x7F, 0xFF,
+                0xB0, 192,
+                (byte)TrueTypeInstructionOpcode.Multiply, // 32767 * 192 / 64 = 98301
+                (byte)TrueTypeInstructionOpcode.SetLoopCount,
+            }, machineState);
+
+            Assert.True(result.Succeeded, result.Failure.ToString());
+            Assert.Equal(65535, machineState.GraphicsState.LoopCount.Value);
+        }
+
+        [Fact]
+        public void ZeroLoopCountIsAcceptedAndLoopedInstructionConsumesNoPointOperands()
+        {
+            TrueTypeVirtualMachineState machineState = TrueTypeVirtualMachineState.ForTests();
+            TrueTypeVirtualMachineResult result = Interpreter().Execute(new byte[]
+            {
+                0xB0, 0,
+                (byte)TrueTypeInstructionOpcode.SetLoopCount,
+                (byte)TrueTypeInstructionOpcode.FlipPoints,
+            }, machineState, new StbTrueTypeSharp.TrueTypeHinting.Geometry.TrueTypeHintingExecutionZones(
+                new StbTrueTypeSharp.TrueTypeHinting.Geometry.TrueTypeHintingZone(
+                    new StbTrueTypeSharp.TrueTypeHinting.Geometry.TrueTypeHintingPoint[0],
+                    new StbTrueTypeSharp.TrueTypeHinting.Geometry.TrueTypeContourEndPointIndex[0]),
+                new StbTrueTypeSharp.TrueTypeHinting.Geometry.TrueTypeHintingZone(
+                    new StbTrueTypeSharp.TrueTypeHinting.Geometry.TrueTypeHintingPoint[0],
+                    new StbTrueTypeSharp.TrueTypeHinting.Geometry.TrueTypeContourEndPointIndex[0])));
+
+            Assert.True(result.Succeeded, result.Failure.ToString());
+            Assert.Equal(1, machineState.GraphicsState.LoopCount.Value);
+        }
+
         [Fact]
         public void VectorAndRoundingOpcodesUpdateGraphicsState()
         {
@@ -156,6 +239,82 @@ namespace TrueTypeHinting.Tests
             Assert.Equal(32, machineState.GraphicsState.MinimumDistanceF26Dot6);
             Assert.False(machineState.GraphicsState.AutoFlip);
             Assert.Equal(new[] { 0, 0x4000 }, Values(result));
+        }
+
+        [Fact]
+        public void ProjectionVectorFromStackUsesLowSixteenBitsAndNormalizes()
+        {
+            TrueTypeVirtualMachineState machineState = TrueTypeVirtualMachineState.ForTests();
+            TrueTypeVirtualMachineResult result = Interpreter().Execute(new byte[]
+            {
+                0xB9, 0x00, 0x01, 0x00, 0x01, // x=1, y=1
+                (byte)TrueTypeInstructionOpcode.SetProjectionVectorFromStack,
+                (byte)TrueTypeInstructionOpcode.GetProjectionVector,
+            }, machineState);
+
+            Assert.True(result.Succeeded, result.Failure.ToString());
+            Assert.Equal(0x2D41, machineState.GraphicsState.ProjectionVector.HorizontalComponent.Value);
+            Assert.Equal(0x2D41, machineState.GraphicsState.ProjectionVector.VerticalComponent.Value);
+            Assert.Equal(0x2D41, machineState.GraphicsState.DualProjectionVector.HorizontalComponent.Value);
+            Assert.Equal(new[] { 0x2D41, 0x2D41 }, Values(result));
+        }
+
+        [Fact]
+        public void FreedomVectorFromStackSignExtendsLowSixteenBitsAndNormalizes()
+        {
+            TrueTypeVirtualMachineState machineState = TrueTypeVirtualMachineState.ForTests();
+            TrueTypeVirtualMachineResult result = Interpreter().Execute(new byte[]
+            {
+                0xB9, 0xFF, 0xFF, 0x00, 0x01, // x=-1, y=1
+                (byte)TrueTypeInstructionOpcode.SetFreedomVectorFromStack,
+                (byte)TrueTypeInstructionOpcode.GetFreedomVector,
+            }, machineState);
+
+            Assert.True(result.Succeeded, result.Failure.ToString());
+            Assert.Equal(-0x2D41, machineState.GraphicsState.FreedomVector.HorizontalComponent.Value);
+            Assert.Equal(0x2D41, machineState.GraphicsState.FreedomVector.VerticalComponent.Value);
+            Assert.Equal(new[] { -0x2D41, 0x2D41 }, Values(result));
+        }
+
+        [Fact]
+        public void ProjectionVectorFromStackIgnoresUpperSixteenBits()
+        {
+            TrueTypeVirtualMachineState machineState = TrueTypeVirtualMachineState.ForTests();
+            TrueTypeVirtualMachineResult result = Interpreter().Execute(new byte[]
+            {
+                0xB1, 0, 1,
+                0xB0, 16,
+                (byte)TrueTypeInstructionOpcode.Multiply, // 1 * 16 / 64 = 0; retain a harmless 32-bit path
+                0xB1, 0, 1,
+                (byte)TrueTypeInstructionOpcode.SetProjectionVectorFromStack,
+            }, machineState);
+
+            Assert.True(result.Succeeded, result.Failure.ToString());
+            Assert.Equal(0, machineState.GraphicsState.ProjectionVector.HorizontalComponent.Value);
+            Assert.Equal(0x4000, machineState.GraphicsState.ProjectionVector.VerticalComponent.Value);
+        }
+
+        [Fact]
+        public void ZeroStackVectorLeavesExistingVectorUnchanged()
+        {
+            TrueTypeVirtualMachineState machineState = TrueTypeVirtualMachineState.ForTests();
+            machineState.GraphicsState.ProjectionVector = TrueTypeUnitVector.Vertical;
+            machineState.GraphicsState.DualProjectionVector = TrueTypeUnitVector.Vertical;
+            machineState.GraphicsState.FreedomVector = TrueTypeUnitVector.Vertical;
+            TrueTypeVirtualMachineResult result = Interpreter().Execute(new byte[]
+            {
+                0xB1, 0, 0,
+                (byte)TrueTypeInstructionOpcode.SetProjectionVectorFromStack,
+                0xB1, 0, 0,
+                (byte)TrueTypeInstructionOpcode.SetFreedomVectorFromStack,
+            }, machineState);
+
+            Assert.True(result.Succeeded, result.Failure.ToString());
+            Assert.Equal(0, machineState.GraphicsState.ProjectionVector.HorizontalComponent.Value);
+            Assert.Equal(0x4000, machineState.GraphicsState.ProjectionVector.VerticalComponent.Value);
+            Assert.Equal(0, machineState.GraphicsState.FreedomVector.HorizontalComponent.Value);
+            Assert.Equal(0x4000, machineState.GraphicsState.FreedomVector.VerticalComponent.Value);
+            Assert.Equal(0x4000, machineState.GraphicsState.DualProjectionVector.VerticalComponent.Value);
         }
 
         [Fact]

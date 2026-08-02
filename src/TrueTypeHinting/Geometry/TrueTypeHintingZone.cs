@@ -30,6 +30,9 @@ namespace StbTrueTypeSharp.TrueTypeHinting.Geometry
 
         internal int PointCount => _trueTypeHintingPoints.Length;
         internal int ContourCount => _trueTypeContourEndPointIndices.Length;
+        internal int OutlinePointCount => _trueTypeContourEndPointIndices.Length == 0
+            ? 0
+            : _trueTypeContourEndPointIndices[_trueTypeContourEndPointIndices.Length - 1].Value + 1;
 
         internal bool TryGetPoint(int trueTypePointIndex, out TrueTypeHintingPoint trueTypeHintingPoint)
         {
