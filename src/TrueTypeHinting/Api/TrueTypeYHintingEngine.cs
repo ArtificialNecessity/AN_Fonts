@@ -197,15 +197,43 @@ namespace StbTrueTypeSharp.TrueTypeHinting
         internal TrueTypeYHintingResult HintGlyph(TrueTypeHintingSizeInstance trueTypeHintingSizeInstance,
             TrueTypeGlyphIndex trueTypeGlyphIndex, TrueTypeHintingExecutionTrace trueTypeHintingExecutionTrace)
         {
+            if (!TryExecuteGlyph(trueTypeHintingSizeInstance, trueTypeGlyphIndex, trueTypeHintingExecutionTrace,
+                    out Geometry.TrueTypeHintingZone hintedGlyphZone, out TrueTypeYHintingFailure hintingFailure))
+                return TrueTypeYHintingResult.Failed(hintingFailure);
+            return TrueTypeYHintingResult.Successful(hintedGlyphZone.ClonePointsForResult());
+        }
+
+        /// <summary>
+        /// Executes one simple glyph and prepares the exact y-hinted outline used for both
+        /// bitmap bounds and rasterization. Horizontal coordinates remain unhinted.
+        /// </summary>
+        public bool TryPrepareGlyphRaster(TrueTypeHintingSizeInstance trueTypeHintingSizeInstance,
+            TrueTypeGlyphIndex trueTypeGlyphIndex, float horizontalSubpixelShift,
+            out IPreparedGlyphRaster preparedGlyphRaster, out TrueTypeYHintingFailure hintingFailure)
+        {
+            preparedGlyphRaster = null;
+            if (!TryExecuteGlyph(trueTypeHintingSizeInstance, trueTypeGlyphIndex, null,
+                    out Geometry.TrueTypeHintingZone hintedGlyphZone, out hintingFailure))
+                return false;
+            if (!Geometry.TrueTypeYHintedOutlineBuilder.TryBuild(hintedGlyphZone,
+                    out Common.stbtt_vertex[] hintedVerticesF26Dot6, out hintingFailure))
+                return false;
+            preparedGlyphRaster = new TrueTypeYPreparedGlyphRaster(hintedVerticesF26Dot6, horizontalSubpixelShift);
+            return true;
+        }
+
+        private static bool TryExecuteGlyph(TrueTypeHintingSizeInstance trueTypeHintingSizeInstance,
+            TrueTypeGlyphIndex trueTypeGlyphIndex, TrueTypeHintingExecutionTrace trueTypeHintingExecutionTrace,
+            out Geometry.TrueTypeHintingZone hintedGlyphZone, out TrueTypeYHintingFailure hintingFailure)
+        {
             if (trueTypeHintingSizeInstance == null) throw new ArgumentNullException(nameof(trueTypeHintingSizeInstance));
+            hintedGlyphZone = null;
             if (!Geometry.TrueTypeSimpleGlyphParser.TryParse(trueTypeHintingSizeInstance.TrueTypeHintingFontFace,
                     trueTypeHintingSizeInstance.DevicePpemY, trueTypeGlyphIndex,
-                    out Geometry.TrueTypeHintingGlyphInput trueTypeHintingGlyphInput,
-                    out TrueTypeYHintingFailure trueTypeGlyphParsingFailure))
-                return TrueTypeYHintingResult.Failed(trueTypeGlyphParsingFailure);
+                    out Geometry.TrueTypeHintingGlyphInput trueTypeHintingGlyphInput, out hintingFailure))
+                return false;
 
-            VirtualMachine.TrueTypeVirtualMachineState glyphVirtualMachineState =
-                trueTypeHintingSizeInstance.CreateGlyphExecutionState();
+            VirtualMachine.TrueTypeVirtualMachineState glyphVirtualMachineState = trueTypeHintingSizeInstance.CreateGlyphExecutionState();
             Geometry.TrueTypeHintingExecutionZones executionZones = Geometry.TrueTypeHintingExecutionZones.Create(
                 trueTypeHintingGlyphInput.GlyphZone,
                 trueTypeHintingSizeInstance.TrueTypeHintingFontFace.MaximumProfile.MaximumTwilightPointCount.Value);
@@ -216,9 +244,14 @@ namespace StbTrueTypeSharp.TrueTypeHinting
                 trueTypeHintingGlyphInput.GlyphInstructionBytes.ToByteArray(), glyphVirtualMachineState,
                 executionZones, trueTypeHintingExecutionTrace);
             if (!glyphExecutionResult.Succeeded)
-                return TrueTypeYHintingResult.Failed(Failure(TrueTypeHintingFailureCode.InterpreterNotImplemented,
-                    "Glyph instruction execution failed: " + glyphExecutionResult.Failure));
-            return TrueTypeYHintingResult.Successful(executionZones.GlyphZone.ClonePointsForResult());
+            {
+                hintingFailure = Failure(TrueTypeHintingFailureCode.InterpreterNotImplemented,
+                    "Glyph instruction execution failed: " + glyphExecutionResult.Failure);
+                return false;
+            }
+            hintedGlyphZone = executionZones.GlyphZone;
+            hintingFailure = default;
+            return true;
         }
 
         private static TrueTypeYHintingFailure Failure(TrueTypeHintingFailureCode failureCode, string failureMessage)
