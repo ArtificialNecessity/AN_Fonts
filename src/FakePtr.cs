@@ -16,6 +16,8 @@ namespace StbTrueTypeSharp
 		public int Offset;
 
 		public bool IsNull => _array == null;
+		/// <summary>Number of elements available from the current pointer offset.</summary>
+		public int RemainingLength => _array == null ? 0 : _array.Length - Offset;
 
 		public T this[int index]
 		{
