@@ -9,8 +9,16 @@ namespace StbTrueTypeSharp.TrueTypeHinting.VirtualMachine
         DivisionByZero,
         InvalidJumpTarget,
         InstructionExecutionBudgetExceeded,
+        CallDepthLimitExceeded,
+        UndefinedFunction,
+        DuplicateFunctionDefinition,
+        UndefinedInstructionDefinition,
+        DuplicateInstructionDefinition,
+        InvalidStorageIndex,
+        InvalidControlValueIndex,
         UnsupportedOpcode,
         InvalidConditionalStructure,
+        InvalidFunctionDefinition,
     }
 
     internal readonly struct TrueTypeVirtualMachineFailure

@@ -42,6 +42,48 @@ namespace StbTrueTypeSharp.TrueTypeHinting.VirtualMachine
             return true;
         }
 
+        internal bool TryReadDefinitionBody(out byte[] trueTypeDefinitionBody,
+            out TrueTypeVirtualMachineFailure trueTypeInstructionFailure)
+        {
+            int definitionBodyStartBytePosition = InstructionBytePosition;
+            while (HasRemainingInstructionBytes)
+            {
+                int opcodeBytePosition = InstructionBytePosition;
+                if (!TryReadByte(out byte trueTypeOpcodeByte, out trueTypeInstructionFailure))
+                {
+                    trueTypeDefinitionBody = null;
+                    return false;
+                }
+                if (trueTypeOpcodeByte == (byte)TrueTypeInstructionOpcode.EndFunction)
+                {
+                    int definitionBodyByteLength = opcodeBytePosition - definitionBodyStartBytePosition;
+                    trueTypeDefinitionBody = new byte[definitionBodyByteLength];
+                    System.Buffer.BlockCopy(_trueTypeInstructionBytes, definitionBodyStartBytePosition,
+                        trueTypeDefinitionBody, 0, definitionBodyByteLength);
+                    trueTypeInstructionFailure = default;
+                    return true;
+                }
+                if (!TrySkipPushPayload(trueTypeOpcodeByte, out trueTypeInstructionFailure))
+                {
+                    trueTypeDefinitionBody = null;
+                    return false;
+                }
+                if (trueTypeOpcodeByte == (byte)TrueTypeInstructionOpcode.FunctionDefinition ||
+                    trueTypeOpcodeByte == (byte)TrueTypeInstructionOpcode.InstructionDefinition)
+                {
+                    trueTypeDefinitionBody = null;
+                    trueTypeInstructionFailure = Failure(TrueTypeVirtualMachineFailureCode.InvalidFunctionDefinition,
+                        "TrueType function and instruction definitions may not be nested.");
+                    return false;
+                }
+            }
+
+            trueTypeDefinitionBody = null;
+            trueTypeInstructionFailure = Failure(TrueTypeVirtualMachineFailureCode.InvalidFunctionDefinition,
+                "The TrueType function or instruction definition has no ENDF terminator.");
+            return false;
+        }
+
         internal bool TryJumpRelativeFromCurrentPosition(int relativeInstructionByteOffset,
             out TrueTypeVirtualMachineFailure trueTypeInstructionFailure)
         {
