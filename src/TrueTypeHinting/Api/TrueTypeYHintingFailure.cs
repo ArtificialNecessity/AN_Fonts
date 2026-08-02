@@ -11,6 +11,7 @@ namespace StbTrueTypeSharp.TrueTypeHinting
         UnsupportedMaxpVersion,
         InvalidGlyphIndex,
         MalformedGlyphData,
+        HintedOutlineConstructionFailed,
         MalformedControlValueTable,
         FontProgramExecutionFailed,
         ControlValueProgramExecutionFailed,
