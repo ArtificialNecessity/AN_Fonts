@@ -118,15 +118,31 @@ namespace StbTrueTypeSharp.TrueTypeHinting
                 ? trueTypeHintingFaceRuntime.GetOrCreateSizeInstance(devicePpemY)
                 : TrueTypeHintingSizeInstanceResult.Failed(trueTypeHintingFaceRuntimeFailure);
 
-        /// <summary>Placeholder until VM phases land; fails explicitly rather than silently ignoring instructions.</summary>
-        public TrueTypeYHintingResult HintGlyph(TrueTypeHintingFontFace trueTypeHintingFontFace,
-            DevicePpemY devicePpemY, TrueTypeGlyphIndex trueTypeGlyphIndex)
+        /// <summary>Parses and executes one simple TrueType glyph using a prepared ppem instance.</summary>
+        public TrueTypeYHintingResult HintGlyph(TrueTypeHintingSizeInstance trueTypeHintingSizeInstance,
+            TrueTypeGlyphIndex trueTypeGlyphIndex)
         {
-            if (trueTypeHintingFontFace == null) throw new ArgumentNullException(nameof(trueTypeHintingFontFace));
-            _ = devicePpemY;
-            _ = trueTypeGlyphIndex;
-            return TrueTypeYHintingResult.Failed(Failure(TrueTypeHintingFailureCode.InterpreterNotImplemented,
-                "The TrueType instruction interpreter has not been implemented yet."));
+            if (trueTypeHintingSizeInstance == null) throw new ArgumentNullException(nameof(trueTypeHintingSizeInstance));
+            if (!Geometry.TrueTypeSimpleGlyphParser.TryParse(trueTypeHintingSizeInstance.TrueTypeHintingFontFace,
+                    trueTypeHintingSizeInstance.DevicePpemY, trueTypeGlyphIndex,
+                    out Geometry.TrueTypeHintingGlyphInput trueTypeHintingGlyphInput,
+                    out TrueTypeYHintingFailure trueTypeGlyphParsingFailure))
+                return TrueTypeYHintingResult.Failed(trueTypeGlyphParsingFailure);
+
+            VirtualMachine.TrueTypeVirtualMachineState glyphVirtualMachineState =
+                trueTypeHintingSizeInstance.CreateGlyphExecutionState();
+            Geometry.TrueTypeHintingExecutionZones executionZones = Geometry.TrueTypeHintingExecutionZones.Create(
+                trueTypeHintingGlyphInput.GlyphZone,
+                trueTypeHintingSizeInstance.TrueTypeHintingFontFace.MaximumProfile.MaximumTwilightPointCount.Value);
+            var interpreter = new VirtualMachine.TrueTypeInstructionInterpreter(
+                VirtualMachine.TrueTypeExecutionLimits.FromMaximumProfile(
+                    trueTypeHintingSizeInstance.TrueTypeHintingFontFace.MaximumProfile));
+            VirtualMachine.TrueTypeVirtualMachineResult glyphExecutionResult = interpreter.Execute(
+                trueTypeHintingGlyphInput.GlyphInstructionBytes.ToByteArray(), glyphVirtualMachineState, executionZones);
+            if (!glyphExecutionResult.Succeeded)
+                return TrueTypeYHintingResult.Failed(Failure(TrueTypeHintingFailureCode.InterpreterNotImplemented,
+                    "Glyph instruction execution failed: " + glyphExecutionResult.Failure));
+            return TrueTypeYHintingResult.Successful(executionZones.GlyphZone.ClonePointsForResult());
         }
 
         private static TrueTypeYHintingFailure Failure(TrueTypeHintingFailureCode failureCode, string failureMessage)
@@ -135,15 +151,20 @@ namespace StbTrueTypeSharp.TrueTypeHinting
 
     public sealed class TrueTypeYHintingResult
     {
-        private TrueTypeYHintingResult(bool trueTypeYHintingSucceeded, TrueTypeYHintingFailure trueTypeYHintingFailure)
+        private TrueTypeYHintingResult(bool trueTypeYHintingSucceeded, TrueTypeYHintingFailure trueTypeYHintingFailure,
+            Geometry.TrueTypeHintingPoint[] trueTypeHintedPoints)
         {
             Succeeded = trueTypeYHintingSucceeded;
             Failure = trueTypeYHintingFailure;
+            TrueTypeHintedPoints = trueTypeHintedPoints ?? new Geometry.TrueTypeHintingPoint[0];
         }
 
         public bool Succeeded { get; }
         public TrueTypeYHintingFailure Failure { get; }
+        internal Geometry.TrueTypeHintingPoint[] TrueTypeHintedPoints { get; }
         internal static TrueTypeYHintingResult Failed(TrueTypeYHintingFailure failure)
-            => new TrueTypeYHintingResult(false, failure);
+            => new TrueTypeYHintingResult(false, failure, null);
+        internal static TrueTypeYHintingResult Successful(Geometry.TrueTypeHintingPoint[] trueTypeHintedPoints)
+            => new TrueTypeYHintingResult(true, default, trueTypeHintedPoints);
     }
 }

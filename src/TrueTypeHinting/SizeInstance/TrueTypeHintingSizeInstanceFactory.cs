@@ -39,7 +39,8 @@ namespace StbTrueTypeSharp.TrueTypeHinting.SizeInstance
                 return TrueTypeHintingSizeInstanceResult.Failed(Failure(TrueTypeHintingFailureCode.ControlValueProgramExecutionFailed,
                     "prep execution failed: " + controlValueProgramResult.Failure));
 
-            return TrueTypeHintingSizeInstanceResult.Success(new TrueTypeHintingSizeInstance(devicePpemY,
+            return TrueTypeHintingSizeInstanceResult.Success(new TrueTypeHintingSizeInstance(
+                trueTypeHintingFontFace, devicePpemY,
                 virtualMachineState, fontProgramInstructionCount,
                 controlValueProgramResult.ExecutedInstructionCount));
         }
