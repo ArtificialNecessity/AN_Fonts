@@ -980,7 +980,7 @@ namespace StbTrueTypeSharp
 
 		/// <summary>
 		/// Detects exactly-horizontal outline LINE segments of at least
-		/// min_length_font_units (SilkyNvg plans/crisp_text_yonly_gridfit_hinting.md
+		/// min_length_font_units (SilkyNvg plans/crisp_text_yonly_autofit_gridfit.md
 		/// Phase 2 — stem-edge detection for y-only grid-fit). Returns edge count;
 		/// edge_ys are y positions in FONT UNITS (y-up), edge_is_top_of_ink is true
 		/// when the ink lies BELOW the edge (the edge is the upper boundary of a
@@ -1485,7 +1485,7 @@ namespace StbTrueTypeSharp
 
 		/// <summary>
 		/// stbtt_GetGlyphBitmapBoxSubpixel with a y-only grid-fit remap
-		/// (SilkyNvg plans/crisp_text_yonly_gridfit_hinting.md). The remap operates
+		/// (SilkyNvg plans/crisp_text_yonly_autofit_gridfit.md). The remap operates
 		/// in y-UP pixel space (baseline 0, ascenders positive) and MUST be
 		/// monotonic non-decreasing — only the two box corners are remapped here,
 		/// which bounds all remapped outline y values iff the map is monotonic.
@@ -1607,7 +1607,7 @@ namespace StbTrueTypeSharp
 
 		/// <summary>
 		/// stbtt_MakeGlyphBitmapSubpixel with a y-only grid-fit remap (SilkyNvg
-		/// plans/crisp_text_yonly_gridfit_hinting.md). The remap is applied to the
+		/// plans/crisp_text_yonly_autofit_gridfit.md). The remap is applied to the
 		/// flattened outline in y-UP pixel space (see stbtt_YPixelGridFitRemap) and
 		/// to the bitmap-box corners, so the output origin matches
 		/// stbtt_GetGlyphBitmapBoxSubpixelYRemap. x (including shift_x subpixel
