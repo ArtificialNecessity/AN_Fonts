@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using StbTrueTypeSharp.TrueTypeHinting.FontFace;
 using StbTrueTypeSharp.TrueTypeHinting.SizeInstance;
 
@@ -7,6 +8,9 @@ namespace StbTrueTypeSharp.TrueTypeHinting
     /// <summary>Public entry point for the isolated TrueType Y-hinting subsystem.</summary>
     public sealed class TrueTypeYHintingEngine
     {
+        private readonly Dictionary<TrueTypeHintingFontFace, TrueTypeHintingFaceRuntime> _trueTypeHintingFaceRuntimes =
+            new Dictionary<TrueTypeHintingFontFace, TrueTypeHintingFaceRuntime>();
+
         /// <summary>Creates an immutable, bounds-validated font-program snapshot.</summary>
         public bool TryCreateFontFace(byte[] trueTypeFontFileBytes, TrueTypeFaceIndex trueTypeFaceIndex,
             out TrueTypeHintingFontFace trueTypeHintingFontFace,
@@ -85,10 +89,34 @@ namespace StbTrueTypeSharp.TrueTypeHinting
             return true;
         }
 
-        /// <summary>Scales the CVT and executes fpgm followed by prep for one vertical ppem.</summary>
+        /// <summary>
+        /// Returns one reusable face runtime. The font program executes exactly once per
+        /// face owned by this engine; the runtime caches prepared size instances by ppem.
+        /// </summary>
+        public bool TryGetOrCreateFaceRuntime(TrueTypeHintingFontFace trueTypeHintingFontFace,
+            out TrueTypeHintingFaceRuntime trueTypeHintingFaceRuntime,
+            out TrueTypeYHintingFailure trueTypeHintingFaceRuntimeFailure)
+        {
+            if (trueTypeHintingFontFace == null) throw new ArgumentNullException(nameof(trueTypeHintingFontFace));
+            if (_trueTypeHintingFaceRuntimes.TryGetValue(trueTypeHintingFontFace, out trueTypeHintingFaceRuntime))
+            {
+                trueTypeHintingFaceRuntimeFailure = default;
+                return true;
+            }
+            if (!TrueTypeHintingFaceRuntime.TryCreate(trueTypeHintingFontFace,
+                    out trueTypeHintingFaceRuntime, out trueTypeHintingFaceRuntimeFailure))
+                return false;
+            _trueTypeHintingFaceRuntimes.Add(trueTypeHintingFontFace, trueTypeHintingFaceRuntime);
+            return true;
+        }
+
+        /// <summary>Returns a cached ppem instance after scaling the CVT and executing prep.</summary>
         public TrueTypeHintingSizeInstanceResult CreateSizeInstance(
             TrueTypeHintingFontFace trueTypeHintingFontFace, DevicePpemY devicePpemY)
-            => TrueTypeHintingSizeInstanceFactory.Create(trueTypeHintingFontFace, devicePpemY);
+            => TryGetOrCreateFaceRuntime(trueTypeHintingFontFace, out TrueTypeHintingFaceRuntime trueTypeHintingFaceRuntime,
+                    out TrueTypeYHintingFailure trueTypeHintingFaceRuntimeFailure)
+                ? trueTypeHintingFaceRuntime.GetOrCreateSizeInstance(devicePpemY)
+                : TrueTypeHintingSizeInstanceResult.Failed(trueTypeHintingFaceRuntimeFailure);
 
         /// <summary>Placeholder until VM phases land; fails explicitly rather than silently ignoring instructions.</summary>
         public TrueTypeYHintingResult HintGlyph(TrueTypeHintingFontFace trueTypeHintingFontFace,

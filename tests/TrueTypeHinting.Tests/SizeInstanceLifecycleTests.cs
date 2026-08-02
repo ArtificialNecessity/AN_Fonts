@@ -98,6 +98,77 @@ namespace TrueTypeHinting.Tests
         }
 
         [Fact]
+        public void FaceRuntimeExecutesFontProgramOnceAndCachesPreparedPpemInstances()
+        {
+            byte[] trueTypeFontFileBytes = File.ReadAllBytes(Path.Combine(AppContext.BaseDirectory, "Roboto-Regular.ttf"));
+            var trueTypeYHintingEngine = new TrueTypeYHintingEngine();
+            Assert.True(trueTypeYHintingEngine.TryCreateFontFace(trueTypeFontFileBytes, new TrueTypeFaceIndex(0),
+                out TrueTypeHintingFontFace trueTypeHintingFontFace, out TrueTypeYHintingFailure fontFaceFailure),
+                fontFaceFailure.ToString());
+            Assert.True(trueTypeYHintingEngine.TryGetOrCreateFaceRuntime(trueTypeHintingFontFace,
+                out TrueTypeHintingFaceRuntime firstFaceRuntime, out TrueTypeYHintingFailure firstRuntimeFailure),
+                firstRuntimeFailure.ToString());
+            Assert.True(trueTypeYHintingEngine.TryGetOrCreateFaceRuntime(trueTypeHintingFontFace,
+                out TrueTypeHintingFaceRuntime secondFaceRuntime, out TrueTypeYHintingFailure secondRuntimeFailure),
+                secondRuntimeFailure.ToString());
+
+            Assert.Same(firstFaceRuntime, secondFaceRuntime);
+            Assert.True(firstFaceRuntime.FontProgramInstructionCount > 0);
+            Assert.Equal(0, firstFaceRuntime.CachedSizeInstanceCount);
+
+            TrueTypeHintingSizeInstanceResult firstFourteenPpemResult =
+                firstFaceRuntime.GetOrCreateSizeInstance(new DevicePpemY(14));
+            TrueTypeHintingSizeInstanceResult secondFourteenPpemResult =
+                firstFaceRuntime.GetOrCreateSizeInstance(new DevicePpemY(14));
+            TrueTypeHintingSizeInstanceResult sixteenPpemResult =
+                firstFaceRuntime.GetOrCreateSizeInstance(new DevicePpemY(16));
+
+            Assert.True(firstFourteenPpemResult.Succeeded, firstFourteenPpemResult.Failure.ToString());
+            Assert.True(sixteenPpemResult.Succeeded, sixteenPpemResult.Failure.ToString());
+            Assert.Same(firstFourteenPpemResult, secondFourteenPpemResult);
+            Assert.Same(firstFourteenPpemResult.SizeInstance, secondFourteenPpemResult.SizeInstance);
+            Assert.NotSame(firstFourteenPpemResult.SizeInstance, sixteenPpemResult.SizeInstance);
+            Assert.Equal(2, firstFaceRuntime.CachedSizeInstanceCount);
+            Assert.Equal(firstFaceRuntime.FontProgramInstructionCount,
+                firstFourteenPpemResult.SizeInstance.FontProgramInstructionCount);
+            Assert.Equal(firstFaceRuntime.FontProgramInstructionCount,
+                sixteenPpemResult.SizeInstance.FontProgramInstructionCount);
+        }
+
+        [Fact]
+        public void GlyphExecutionStateClonesPreparedDefaultsAndResetsGlyphLocalReferences()
+        {
+            TrueTypeVirtualMachineState preparedState = TrueTypeVirtualMachineState.ForTests(4, 64, 128);
+            preparedState.GraphicsState.ProjectionVector = TrueTypeUnitVector.Vertical;
+            preparedState.GraphicsState.FreedomVector = TrueTypeUnitVector.Vertical;
+            preparedState.GraphicsState.RoundingMode = TrueTypeRoundingMode.Off;
+            preparedState.GraphicsState.MinimumDistanceF26Dot6 = 32;
+            preparedState.GraphicsState.ReferencePointZero = new TrueTypeReferencePointIndex(17);
+            preparedState.GraphicsState.ZonePointerZero = new TrueTypeZonePointerIndex(0);
+            preparedState.GraphicsState.LoopCount = new TrueTypeLoopCount(9);
+            Assert.True(preparedState.TryWriteStorage(2, 71, out _));
+
+            TrueTypeVirtualMachineState firstGlyphState = preparedState.CloneForGlyphExecution();
+            TrueTypeVirtualMachineState secondGlyphState = preparedState.CloneForGlyphExecution();
+
+            Assert.Equal(0, firstGlyphState.GraphicsState.ReferencePointZero.Value);
+            Assert.Equal(1, firstGlyphState.GraphicsState.ZonePointerZero.Value);
+            Assert.Equal(1, firstGlyphState.GraphicsState.LoopCount.Value);
+            Assert.Equal(TrueTypeUnitVector.Vertical.VerticalComponent.Value,
+                firstGlyphState.GraphicsState.ProjectionVector.VerticalComponent.Value);
+            Assert.Equal(TrueTypeRoundingMode.Off, firstGlyphState.GraphicsState.RoundingMode);
+            Assert.Equal(32, firstGlyphState.GraphicsState.MinimumDistanceF26Dot6);
+            Assert.True(firstGlyphState.TryReadStorage(2, out int clonedStorageValue, out _));
+            Assert.Equal(71, clonedStorageValue);
+
+            firstGlyphState.GraphicsState.ReferencePointZero = new TrueTypeReferencePointIndex(99);
+            Assert.True(firstGlyphState.TryWriteStorage(2, 100, out _));
+            Assert.Equal(0, secondGlyphState.GraphicsState.ReferencePointZero.Value);
+            Assert.True(secondGlyphState.TryReadStorage(2, out int isolatedStorageValue, out _));
+            Assert.Equal(71, isolatedStorageValue);
+        }
+
+        [Fact]
         public void DirectWriteGetInfoReportsVersion40AndGrayscaleSymmetricCapabilities()
         {
             TrueTypeVirtualMachineState machineState = TrueTypeVirtualMachineState.ForTests();

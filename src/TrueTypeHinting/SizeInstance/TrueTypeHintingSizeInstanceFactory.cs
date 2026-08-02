@@ -10,35 +10,37 @@ namespace StbTrueTypeSharp.TrueTypeHinting.SizeInstance
             DevicePpemY devicePpemY)
         {
             if (trueTypeHintingFontFace == null) throw new ArgumentNullException(nameof(trueTypeHintingFontFace));
+            if (!TrueTypeHintingFaceRuntime.TryCreate(trueTypeHintingFontFace,
+                    out TrueTypeHintingFaceRuntime trueTypeHintingFaceRuntime,
+                    out TrueTypeYHintingFailure trueTypeHintingFaceRuntimeFailure))
+                return TrueTypeHintingSizeInstanceResult.Failed(trueTypeHintingFaceRuntimeFailure);
+            return trueTypeHintingFaceRuntime.GetOrCreateSizeInstance(devicePpemY);
+        }
+
+        internal static TrueTypeHintingSizeInstanceResult Create(TrueTypeHintingFontFace trueTypeHintingFontFace,
+            DevicePpemY devicePpemY, TrueTypeVirtualMachineState fontProgramVirtualMachineState,
+            TrueTypeInstructionInterpreter trueTypeInstructionInterpreter, int fontProgramInstructionCount)
+        {
             if (!TryScaleControlValues(trueTypeHintingFontFace.FontProgram.ControlValueTable.ToByteArray(),
                     trueTypeHintingFontFace.UnitsPerEm.Value, devicePpemY.Value, out int[] scaledControlValues,
                     out TrueTypeYHintingFailure controlValueScalingFailure))
                 return TrueTypeHintingSizeInstanceResult.Failed(controlValueScalingFailure);
 
-            var virtualMachineState = new TrueTypeVirtualMachineState(
-                new TrueTypeStorageCapacity(trueTypeHintingFontFace.MaximumProfile.MaximumStorageCount.Value),
+            TrueTypeVirtualMachineState virtualMachineState = fontProgramVirtualMachineState.CloneForSizeInstance(
                 scaledControlValues,
                 new TrueTypeRasterizerEnvironment(devicePpemY,
                     new TrueTypeUnitsPerEmScale(trueTypeHintingFontFace.UnitsPerEm.Value),
                     symmetricSmoothingEnabled: true,
                     grayscaleClearTypeEnabled: true));
-            var interpreter = new TrueTypeInstructionInterpreter(
-                TrueTypeExecutionLimits.FromMaximumProfile(trueTypeHintingFontFace.MaximumProfile));
 
-            TrueTypeVirtualMachineResult fontProgramResult = interpreter.Execute(
-                trueTypeHintingFontFace.FontProgram.FontProgram.ToByteArray(), virtualMachineState);
-            if (!fontProgramResult.Succeeded)
-                return TrueTypeHintingSizeInstanceResult.Failed(Failure(TrueTypeHintingFailureCode.FontProgramExecutionFailed,
-                    "fpgm execution failed: " + fontProgramResult.Failure));
-
-            TrueTypeVirtualMachineResult controlValueProgramResult = interpreter.Execute(
+            TrueTypeVirtualMachineResult controlValueProgramResult = trueTypeInstructionInterpreter.Execute(
                 trueTypeHintingFontFace.FontProgram.ControlValueProgram.ToByteArray(), virtualMachineState);
             if (!controlValueProgramResult.Succeeded)
                 return TrueTypeHintingSizeInstanceResult.Failed(Failure(TrueTypeHintingFailureCode.ControlValueProgramExecutionFailed,
                     "prep execution failed: " + controlValueProgramResult.Failure));
 
             return TrueTypeHintingSizeInstanceResult.Success(new TrueTypeHintingSizeInstance(devicePpemY,
-                virtualMachineState, fontProgramResult.ExecutedInstructionCount,
+                virtualMachineState, fontProgramInstructionCount,
                 controlValueProgramResult.ExecutedInstructionCount));
         }
 

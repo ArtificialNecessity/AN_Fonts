@@ -21,6 +21,10 @@ namespace StbTrueTypeSharp.TrueTypeHinting.SizeInstance
         public int ControlValueProgramInstructionCount { get; }
         public int ScaledControlValueCount => VirtualMachineState.ControlValueCount.Value;
         internal TrueTypeVirtualMachineState VirtualMachineState { get; }
+
+        /// <summary>Creates isolated glyph state with prepared defaults and reset glyph-local references.</summary>
+        internal TrueTypeVirtualMachineState CreateGlyphExecutionState()
+            => VirtualMachineState.CloneForGlyphExecution();
     }
 
     public sealed class TrueTypeHintingSizeInstanceResult
