@@ -139,10 +139,10 @@ namespace StbTrueTypeSharp.TrueTypeHinting.VirtualMachine
                 case TrueTypeInstructionOpcode.SetDualProjectionVectorsParallelToLine: return ExecuteSetVectorToLine(true, true, false, trueTypeExecutionContext, out trueTypeProgramFailure);
                 case TrueTypeInstructionOpcode.SetDualProjectionVectorsPerpendicularToLine: return ExecuteSetVectorToLine(true, true, true, trueTypeExecutionContext, out trueTypeProgramFailure);
                 case TrueTypeInstructionOpcode.SetProjectionVectorFromStack:
-                    if (!TryPopUnitVector(trueTypeOperandStack, out TrueTypeUnitVector projectionVector, out trueTypeProgramFailure)) return false;
+                    if (!TryPopUnitVector(trueTypeOperandStack, trueTypeGraphicsState.ProjectionVector, out TrueTypeUnitVector projectionVector, out trueTypeProgramFailure)) return false;
                     SetProjectionVector(trueTypeGraphicsState, projectionVector); return true;
                 case TrueTypeInstructionOpcode.SetFreedomVectorFromStack:
-                    if (!TryPopUnitVector(trueTypeOperandStack, out TrueTypeUnitVector freedomVector, out trueTypeProgramFailure)) return false;
+                    if (!TryPopUnitVector(trueTypeOperandStack, trueTypeGraphicsState.FreedomVector, out TrueTypeUnitVector freedomVector, out trueTypeProgramFailure)) return false;
                     trueTypeGraphicsState.FreedomVector = freedomVector; return Success(out trueTypeProgramFailure);
                 case TrueTypeInstructionOpcode.GetProjectionVector:
                     return PushUnitVector(trueTypeOperandStack, trueTypeGraphicsState.ProjectionVector, out trueTypeProgramFailure);
@@ -154,12 +154,12 @@ namespace StbTrueTypeSharp.TrueTypeHinting.VirtualMachine
                 case TrueTypeInstructionOpcode.SetReferencePointZero: return PopReferencePoint(trueTypeOperandStack, value => trueTypeGraphicsState.ReferencePointZero = new TrueTypeReferencePointIndex(value), out trueTypeProgramFailure);
                 case TrueTypeInstructionOpcode.SetReferencePointOne: return PopReferencePoint(trueTypeOperandStack, value => trueTypeGraphicsState.ReferencePointOne = new TrueTypeReferencePointIndex(value), out trueTypeProgramFailure);
                 case TrueTypeInstructionOpcode.SetReferencePointTwo: return PopReferencePoint(trueTypeOperandStack, value => trueTypeGraphicsState.ReferencePointTwo = new TrueTypeReferencePointIndex(value), out trueTypeProgramFailure);
-                case TrueTypeInstructionOpcode.SetZonePointerZero: return PopReferencePoint(trueTypeOperandStack, value => trueTypeGraphicsState.ZonePointerZero = new TrueTypeZonePointerIndex(value), out trueTypeProgramFailure);
-                case TrueTypeInstructionOpcode.SetZonePointerOne: return PopReferencePoint(trueTypeOperandStack, value => trueTypeGraphicsState.ZonePointerOne = new TrueTypeZonePointerIndex(value), out trueTypeProgramFailure);
-                case TrueTypeInstructionOpcode.SetZonePointerTwo: return PopReferencePoint(trueTypeOperandStack, value => trueTypeGraphicsState.ZonePointerTwo = new TrueTypeZonePointerIndex(value), out trueTypeProgramFailure);
+                case TrueTypeInstructionOpcode.SetZonePointerZero: return ExecuteSetZonePointers(trueTypeOperandStack, trueTypeGraphicsState, 1, out trueTypeProgramFailure);
+                case TrueTypeInstructionOpcode.SetZonePointerOne: return ExecuteSetZonePointers(trueTypeOperandStack, trueTypeGraphicsState, 2, out trueTypeProgramFailure);
+                case TrueTypeInstructionOpcode.SetZonePointerTwo: return ExecuteSetZonePointers(trueTypeOperandStack, trueTypeGraphicsState, 4, out trueTypeProgramFailure);
                 case TrueTypeInstructionOpcode.SetAllZonePointers:
-                    return PopReferencePoint(trueTypeOperandStack, value => { var zone = new TrueTypeZonePointerIndex(value); trueTypeGraphicsState.ZonePointerZero = zone; trueTypeGraphicsState.ZonePointerOne = zone; trueTypeGraphicsState.ZonePointerTwo = zone; }, out trueTypeProgramFailure);
-                case TrueTypeInstructionOpcode.SetLoopCount: return PopReferencePoint(trueTypeOperandStack, value => trueTypeGraphicsState.LoopCount = new TrueTypeLoopCount(value), out trueTypeProgramFailure);
+                    return ExecuteSetZonePointers(trueTypeOperandStack, trueTypeGraphicsState, 7, out trueTypeProgramFailure);
+                case TrueTypeInstructionOpcode.SetLoopCount: return ExecuteSetLoopCount(trueTypeOperandStack, trueTypeGraphicsState, out trueTypeProgramFailure);
                 case TrueTypeInstructionOpcode.RoundToGrid: trueTypeGraphicsState.RoundingMode = TrueTypeRoundingMode.ToGrid; break;
                 case TrueTypeInstructionOpcode.RoundToHalfGrid: trueTypeGraphicsState.RoundingMode = TrueTypeRoundingMode.ToHalfGrid; break;
                 case TrueTypeInstructionOpcode.RoundToDoubleGrid: trueTypeGraphicsState.RoundingMode = TrueTypeRoundingMode.ToDoubleGrid; break;
@@ -439,6 +439,40 @@ namespace StbTrueTypeSharp.TrueTypeHinting.VirtualMachine
             return state.TryWriteControlValue(index, state.ScaleFontUnitsToF26Dot6(fontUnitValue), out failure);
         }
 
+        private static bool ExecuteSetZonePointers(TrueTypeOperandStack stack, TrueTypeGraphicsState state,
+            int zonePointerSelectionMask, out TrueTypeVirtualMachineFailure failure)
+        {
+            if (!stack.TryPop(out int zoneIndex, out failure)) return false;
+            if (zoneIndex != 0 && zoneIndex != 1)
+            {
+                failure = Failure(TrueTypeVirtualMachineFailureCode.InvalidZonePointer,
+                    "A TrueType zone-pointer instruction accepts only zone zero or zone one.");
+                return false;
+            }
+
+            var zonePointerIndex = new TrueTypeZonePointerIndex(zoneIndex);
+            if ((zonePointerSelectionMask & 1) != 0) state.ZonePointerZero = zonePointerIndex;
+            if ((zonePointerSelectionMask & 2) != 0) state.ZonePointerOne = zonePointerIndex;
+            if ((zonePointerSelectionMask & 4) != 0) state.ZonePointerTwo = zonePointerIndex;
+            return Success(out failure);
+        }
+
+        private static bool ExecuteSetLoopCount(TrueTypeOperandStack stack, TrueTypeGraphicsState state,
+            out TrueTypeVirtualMachineFailure failure)
+        {
+            if (!stack.TryPop(out int requestedLoopCount, out failure)) return false;
+            if (requestedLoopCount < 0)
+            {
+                failure = Failure(TrueTypeVirtualMachineFailureCode.InvalidGraphicsStateValue,
+                    "SLOOP loop count cannot be negative.");
+                return false;
+            }
+
+            // Zero occurs in real instructed fonts despite being invalid in the original specification.
+            state.LoopCount = new TrueTypeLoopCount(Math.Min(requestedLoopCount, 0xFFFF));
+            return Success(out failure);
+        }
+
         private static bool ExecuteSetDeltaShift(TrueTypeOperandStack stack, TrueTypeGraphicsState state,
             out TrueTypeVirtualMachineFailure failure)
         {
@@ -550,11 +584,15 @@ namespace StbTrueTypeSharp.TrueTypeHinting.VirtualMachine
 
         private static void SetBothVectors(TrueTypeGraphicsState state, TrueTypeUnitVector vector) { SetProjectionVector(state, vector); state.FreedomVector = vector; }
         private static void SetProjectionVector(TrueTypeGraphicsState state, TrueTypeUnitVector vector) { state.ProjectionVector = vector; state.DualProjectionVector = vector; }
-        private static bool TryPopUnitVector(TrueTypeOperandStack stack, out TrueTypeUnitVector vector, out TrueTypeVirtualMachineFailure failure)
+        private static bool TryPopUnitVector(TrueTypeOperandStack stack, TrueTypeUnitVector zeroVectorFallback,
+            out TrueTypeUnitVector vector, out TrueTypeVirtualMachineFailure failure)
         {
             if (!stack.TryPop(out int vertical, out failure) || !stack.TryPop(out int horizontal, out failure)) { vector = default; return false; }
-            try { vector = new TrueTypeUnitVector(new TrueTypeVectorComponent(horizontal), new TrueTypeVectorComponent(vertical)); return Success(out failure); }
-            catch (ArgumentOutOfRangeException) { vector = default; failure = Failure(TrueTypeVirtualMachineFailureCode.InvalidFunctionDefinition, "A vector component is outside F2Dot14 range."); return false; }
+            int signedHorizontalF2Dot14 = unchecked((short)(horizontal & 0xFFFF));
+            int signedVerticalF2Dot14 = unchecked((short)(vertical & 0xFFFF));
+            vector = TrueTypeHintingGeometryOperations.NormalizeUnitVector(
+                signedHorizontalF2Dot14, signedVerticalF2Dot14, zeroVectorFallback);
+            return Success(out failure);
         }
         private static bool PushUnitVector(TrueTypeOperandStack stack, TrueTypeUnitVector vector, out TrueTypeVirtualMachineFailure failure)
             => stack.TryPush(vector.HorizontalComponent.Value, out failure) && stack.TryPush(vector.VerticalComponent.Value, out failure);
