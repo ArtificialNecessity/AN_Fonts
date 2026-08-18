@@ -1949,6 +1949,34 @@ namespace StbTrueTypeSharp
 		}
 
 		/// <summary>
+		/// Returns the sxHeight field from the OS/2 table (int16, font design units).
+		/// sxHeight was added in OS/2 version 2 at byte offset 86. Returns 0 with
+		/// available=false when the table/field is absent, truncated, or non-positive.
+		/// A non-positive sxHeight is not a usable x-height metric per OpenType.
+		/// </summary>
+		public int stbtt_GetXHeight(out bool available)
+		{
+			var tab = (int)stbtt__find_table(this.data, (uint)this.fontstart, "OS/2");
+			// Version 2 fields require bytes through sxHeight at offsets 86..87.
+			if (tab == 0 || tab < 0 || tab > this.data.RemainingLength - 88)
+			{
+				available = false;
+				return 0;
+			}
+
+			int version = ttUSHORT(this.data + tab);
+			if (version < 2)
+			{
+				available = false;
+				return 0;
+			}
+
+			int xHeight = ttSHORT(this.data + tab + 86);
+			available = xHeight > 0;
+			return available ? xHeight : 0;
+		}
+
+		/// <summary>
 		/// Returns the sCapHeight field from the OS/2 table (int16, font units).
 		/// sCapHeight was added in OS/2 version 2. Returns 0 if the OS/2 table
 		/// is missing or is version 0/1 (which don't contain sCapHeight).
