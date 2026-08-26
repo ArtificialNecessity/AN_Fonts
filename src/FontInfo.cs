@@ -439,7 +439,20 @@ namespace StbTrueTypeSharp
 						{
 							scx = x;
 							scy = y;
-							if ((vertices[off + i + 1].type & 1) == 0)
+							if (i + 1 >= n)
+							{
+								// SAFE-PORT FIX (_BUGFIX 380): degenerate contour whose FIRST point
+								// is off-curve and is also the LAST point of the glyph (e.g. the
+								// 1-point hint-carrier glyphs Consolas uses for U+202F/U+034F/
+								// U+FEFF/U+205F). Upstream stb reads vertices[off+i+1] here, one
+								// past the end (silent overread in C, IndexOutOfRangeException in
+								// C#). Treat the lone off-curve point as a degenerate on-curve
+								// start; the contour emits no ink either way.
+								start_off = 0;
+								sx = x;
+								sy = y;
+							}
+							else if ((vertices[off + i + 1].type & 1) == 0)
 							{
 								sx = (x + vertices[off + i + 1].x) >> 1;
 								sy = (y + vertices[off + i + 1].y) >> 1;
