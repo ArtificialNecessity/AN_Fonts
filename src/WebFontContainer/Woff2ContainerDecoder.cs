@@ -60,13 +60,29 @@ namespace StbTrueTypeSharp.WebFontContainer
             headerCursor.TryReadU32(out _ /* totalSfntSize: untrusted, recomputed (woff2_dec.cc) */);
             headerCursor.TryReadU32(out uint totalCompressedByteCount);
             headerCursor.TryReadU16(out _); headerCursor.TryReadU16(out _); // major/minor version
-            headerCursor.TryReadU32(out _); headerCursor.TryReadU32(out _); headerCursor.TryReadU32(out _); // metadata block
-            headerCursor.TryReadU32(out _); headerCursor.TryReadU32(out _); // private block
+            headerCursor.TryReadU32(out uint metadataBlockOffset);
+            headerCursor.TryReadU32(out uint metadataBlockByteCount);
+            headerCursor.TryReadU32(out _ /* metaOrigLength: display-only, unused here */);
+            headerCursor.TryReadU32(out uint privateBlockOffset);
+            headerCursor.TryReadU32(out uint privateBlockByteCount);
 
             if (declaredFileLength != (uint)woff2FileBytes.Length || tableCount == 0)
             {
                 decodeFailure = Failure(WebFontContainerDecodeFailureCode.Woff2TableDirectoryInvalid,
                     $"declared length {declaredFileLength} vs actual {woff2FileBytes.Length}, tableCount {tableCount}");
+                return false;
+            }
+            // Metadata/private block extents must lie within the file (woff2_dec.cc
+            // ReadWOFF2Header; offset 0 means the block is absent).
+            if ((metadataBlockOffset != 0
+                    && ((long)metadataBlockOffset >= woff2FileBytes.Length
+                        || woff2FileBytes.Length - metadataBlockOffset < metadataBlockByteCount))
+                || (privateBlockOffset != 0
+                    && ((long)privateBlockOffset >= woff2FileBytes.Length
+                        || woff2FileBytes.Length - privateBlockOffset < privateBlockByteCount)))
+            {
+                decodeFailure = Failure(WebFontContainerDecodeFailureCode.Woff2BlockLayoutInvalid,
+                    $"metadata [{metadataBlockOffset}, +{metadataBlockByteCount}) or private [{privateBlockOffset}, +{privateBlockByteCount}) outside file length {woff2FileBytes.Length}");
                 return false;
             }
 
@@ -162,6 +178,40 @@ namespace StbTrueTypeSharp.WebFontContainer
                     $"compressed stream [{compressedStreamOffset}, +{totalCompressedByteCount}) exceeds file length {woff2FileBytes.Length}");
                 return false;
             }
+
+            // ── Strict block layout (WOFF2 §3, woff2_dec.cc ReadWOFF2Header tail):
+            // compressed data, metadata, and private blocks must be contiguous (allowing
+            // only 4-byte padding between blocks) and together consume the whole file.
+            // Rejects extraneous bytes between/after blocks and overlapping blocks
+            // (WPT blocks-extraneous-data-001..008, blocks-overlap-001..003).
+            long expectedNextBlockOffset = Align4(compressedStreamOffset + totalCompressedByteCount);
+            if (metadataBlockOffset != 0)
+            {
+                if (metadataBlockOffset != expectedNextBlockOffset)
+                {
+                    decodeFailure = Failure(WebFontContainerDecodeFailureCode.Woff2BlockLayoutInvalid,
+                        $"metadata block at {metadataBlockOffset}, expected {expectedNextBlockOffset}");
+                    return false;
+                }
+                expectedNextBlockOffset = Align4((long)metadataBlockOffset + metadataBlockByteCount);
+            }
+            if (privateBlockOffset != 0)
+            {
+                if (privateBlockOffset != expectedNextBlockOffset)
+                {
+                    decodeFailure = Failure(WebFontContainerDecodeFailureCode.Woff2BlockLayoutInvalid,
+                        $"private block at {privateBlockOffset}, expected {expectedNextBlockOffset}");
+                    return false;
+                }
+                expectedNextBlockOffset = Align4((long)privateBlockOffset + privateBlockByteCount);
+            }
+            if (expectedNextBlockOffset != Align4(woff2FileBytes.Length))
+            {
+                decodeFailure = Failure(WebFontContainerDecodeFailureCode.Woff2BlockLayoutInvalid,
+                    $"blocks end at {expectedNextBlockOffset}, file length {woff2FileBytes.Length}");
+                return false;
+            }
+
             if (decompressedStreamByteCount > (uint)reconstructedSfntByteCountCap)
             {
                 decodeFailure = Failure(WebFontContainerDecodeFailureCode.ReconstructedSfntSizeExceedsCap,
@@ -212,6 +262,8 @@ namespace StbTrueTypeSharp.WebFontContainer
                     return false;
                 }
                 int[] fontTableIndices = new int[fontTableCount];
+                int glyfDirectoryIndex = -1;
+                int locaDirectoryIndex = -1;
                 for (int tableSlot = 0; tableSlot < fontTableCount; tableSlot++)
                 {
                     if (!headerCursor.TryRead255UInt16(out int tableRecordIndex) || tableRecordIndex >= tableRecords.Length)
@@ -221,6 +273,20 @@ namespace StbTrueTypeSharp.WebFontContainer
                         return false;
                     }
                     fontTableIndices[tableSlot] = tableRecordIndex;
+                    uint slotTableTag = tableRecords[tableRecordIndex].TableTag;
+                    if (slotTableTag == Woff2KnownTableTags.GlyfTableTag) glyfDirectoryIndex = tableRecordIndex;
+                    else if (slotTableTag == Woff2KnownTableTags.LocaTableTag) locaDirectoryIndex = tableRecordIndex;
+                }
+                // Each collection font's glyf/loca must be a CONSECUTIVE directory pair
+                // (woff2_dec.cc ReadWOFF2Header: "TTC font has non-consecutive glyf/loca").
+                // Rejects TTCs pairing mismatched glyf/loca tables
+                // (WPT directory-mismatched-tables-001).
+                if ((glyfDirectoryIndex >= 0 || locaDirectoryIndex >= 0)
+                    && locaDirectoryIndex != glyfDirectoryIndex + 1)
+                {
+                    decodeFailure = Failure(WebFontContainerDecodeFailureCode.Woff2CollectionDirectoryInvalid,
+                        $"collection font {fontIndex} glyf index {glyfDirectoryIndex} / loca index {locaDirectoryIndex} not consecutive");
+                    return false;
                 }
                 collectionFontRecords[fontIndex] = new Woff2CollectionFontRecord
                 {
@@ -246,6 +312,24 @@ namespace StbTrueTypeSharp.WebFontContainer
             Woff2TableRecord glyfRecord = FindTableRecord(tableRecords, Woff2KnownTableTags.GlyfTableTag);
             Woff2TableRecord locaRecord = FindTableRecord(tableRecords, Woff2KnownTableTags.LocaTableTag);
 
+            // glyf without loca (or vice versa) is invalid (woff2_dec.cc ReconstructFont:
+            // "Cannot have just one of glyf/loca").
+            if ((glyfRecord != null) != (locaRecord != null))
+            {
+                decodeFailure = Failure(WebFontContainerDecodeFailureCode.Woff2TableDirectoryInvalid,
+                    "font has just one of glyf/loca");
+                return false;
+            }
+            // Both must share the same transform state (woff2_dec.cc: "Cannot transform
+            // just one of glyf/loca"). Catches e.g. glyf flagged null-transform (version 3)
+            // while loca is still transformed (WPT tabledata-transform-bad-flag-002).
+            if (glyfRecord != null && glyfRecord.IsTransformed != locaRecord.IsTransformed)
+            {
+                decodeFailure = Failure(WebFontContainerDecodeFailureCode.Woff2TableDirectoryInvalid,
+                    $"glyf transformed={glyfRecord.IsTransformed} but loca transformed={locaRecord.IsTransformed}");
+                return false;
+            }
+
             if (glyfRecord != null && glyfRecord.IsTransformed)
             {
                 if (locaRecord == null || !locaRecord.IsTransformed)
@@ -264,6 +348,19 @@ namespace StbTrueTypeSharp.WebFontContainer
                     out byte[] reconstructedGlyfBytes, out byte[] reconstructedLocaBytes,
                     out glyphXMinsFontUnits, out decodeFailure))
                 {
+                    return false;
+                }
+                // WOFF2 §4.3 conform-glyf-origLength (symmetric to conform-mustRejectLoca):
+                // the declared glyf origLength must match the reconstructed table size,
+                // tolerating ONLY the final glyph record's 4-byte alignment padding
+                // (0-3 bytes; the reconstructor pads like woff2_dec.cc Pad4, but the
+                // original glyf need not have been padded). Rejects WPT
+                // tabledata-glyf-origlength-001/002/003 while accepting valid fonts.
+                long glyfPaddingByteCount = (long)reconstructedGlyfBytes.Length - glyfRecord.FinalByteCount;
+                if (glyfPaddingByteCount < 0 || glyfPaddingByteCount > 3)
+                {
+                    decodeFailure = Failure(WebFontContainerDecodeFailureCode.Woff2GlyfOrigLengthMismatch,
+                        $"glyf origLength {glyfRecord.FinalByteCount}, reconstructed {reconstructedGlyfBytes.Length}");
                     return false;
                 }
                 glyfRecord.ReconstructedTableBytes = reconstructedGlyfBytes;

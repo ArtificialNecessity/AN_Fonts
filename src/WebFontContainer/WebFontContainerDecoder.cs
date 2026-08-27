@@ -44,8 +44,22 @@ namespace StbTrueTypeSharp.WebFontContainer
             => TryDecodeToSfnt(fontFileBytes, SystemCompressionWebFontDecompressor.Shared,
                 out sfntFontFileBytes, out decodeFailure);
 
+        /// <summary>Parsing-mode overload: <see cref="WebFontContainerParsingMode.StrictWoff"/>
+        /// rejects unknown leading magic instead of passing it through as plain sfnt.</summary>
+        public static bool TryDecodeToSfnt(byte[] fontFileBytes, WebFontContainerParsingMode parsingMode,
+            out SfntFontFileBytes sfntFontFileBytes, out WebFontContainerDecodeFailure decodeFailure)
+            => TryDecodeToSfnt(fontFileBytes, SystemCompressionWebFontDecompressor.Shared, parsingMode,
+                out sfntFontFileBytes, out decodeFailure);
+
         /// <summary>Seam-injectable overload for tests and the later safe-managed decompressor swap.</summary>
         public static bool TryDecodeToSfnt(byte[] fontFileBytes, IWebFontDecompressor webFontDecompressor,
+            out SfntFontFileBytes sfntFontFileBytes, out WebFontContainerDecodeFailure decodeFailure)
+            => TryDecodeToSfnt(fontFileBytes, webFontDecompressor, WebFontContainerParsingMode.LenientSfntPassThrough,
+                out sfntFontFileBytes, out decodeFailure);
+
+        /// <summary>Full overload: decompressor seam plus parsing mode.</summary>
+        public static bool TryDecodeToSfnt(byte[] fontFileBytes, IWebFontDecompressor webFontDecompressor,
+            WebFontContainerParsingMode parsingMode,
             out SfntFontFileBytes sfntFontFileBytes, out WebFontContainerDecodeFailure decodeFailure)
         {
             switch (SniffContainerFormat(fontFileBytes))
@@ -75,6 +89,16 @@ namespace StbTrueTypeSharp.WebFontContainer
                 }
 
                 default:
+                    if (parsingMode == WebFontContainerParsingMode.StrictWoff)
+                    {
+                        // Caller declared the bytes MUST be a WOFF container (WPT
+                        // header-signature-001: signature 'XXXX' must be rejected).
+                        sfntFontFileBytes = default;
+                        decodeFailure = new WebFontContainerDecodeFailure(
+                            WebFontContainerDecodeFailureCode.NotAWoffContainerInStrictMode,
+                            "leading magic is not 'wOFF'/'wOF2'");
+                        return false;
+                    }
                     // Ordinary sfnt bytes: pass through unchanged (zero cost).
                     sfntFontFileBytes = new SfntFontFileBytes(fontFileBytes);
                     decodeFailure = WebFontContainerDecodeFailure.None;
