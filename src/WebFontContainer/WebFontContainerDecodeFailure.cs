@@ -42,6 +42,12 @@ namespace StbTrueTypeSharp.WebFontContainer
         Woff2CompositeGlyphStreamOverrun,
         Woff2HmtxReconstructionInvalid,
         Woff2CollectionDirectoryInvalid,
+
+        // ── WOFF2 strictness (plans/WOFF_decoder_strictness.md) ──
+        Woff2BlockLayoutInvalid,
+        Woff2GlyfOrigLengthMismatch,
+        // ── StrictWoff parsing mode ──
+        NotAWoffContainerInStrictMode,
     }
 
     /// <summary>

@@ -20,5 +20,8 @@
     <!-- Generated via fontTools 4.60 + brotli: same command with f.flavor='woff2'
          (default encoding = TRANSFORMED glyf/loca, exercising full Phase 3 reconstruction). -->
     <None Update="Roboto-Regular.generated.woff2" CopyToOutputDirectory="PreserveNewest" />
+    <!-- W3C WPT css/WOFF2 conformance fixtures (see WptFixtures/README.md for provenance). -->
+    <None Update="WptFixtures\*.woff2" CopyToOutputDirectory="PreserveNewest" />
+    <None Update="WptFixtures\README.md" CopyToOutputDirectory="Never" />
   </ItemGroup>
 </Project>
