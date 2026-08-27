@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\SafeStbTrueTypeSharp.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.12.0" />
+    <PackageReference Include="xunit" Version="2.9.2" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Update="Roboto-Regular.ttf" CopyToOutputDirectory="PreserveNewest" />
+    <!-- Generated once via fontTools 4.60: TTFont('Roboto-Regular.ttf'); f.flavor='woff'; f.save(...)
+         (plans/woff_web_fonts.md: artifact generation command recorded next to artifact). -->
+    <None Update="Roboto-Regular.generated.woff" CopyToOutputDirectory="PreserveNewest" />
+    <!-- Generated via fontTools 4.60 + brotli: same command with f.flavor='woff2'
+         (default encoding = TRANSFORMED glyf/loca, exercising full Phase 3 reconstruction). -->
+    <None Update="Roboto-Regular.generated.woff2" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>
