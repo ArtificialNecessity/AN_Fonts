@@ -63,6 +63,14 @@ namespace StbTrueTypeSharp
 			this.hmtx = (int)stbtt__find_table(ptr, (uint)fontstart, "hmtx");
 			this.kern = (int)stbtt__find_table(ptr, (uint)fontstart, "kern");
 			this.gpos = (int)stbtt__find_table(ptr, (uint)fontstart, "GPOS");
+			// OpenType Font Variations (FontInfoVariations.cs): located here, parsed lazily on first use.
+			this.fvar = (int)stbtt__find_table(ptr, (uint)fontstart, "fvar");
+			this.avar = (int)stbtt__find_table(ptr, (uint)fontstart, "avar");
+			this.gvar = (int)stbtt__find_table(ptr, (uint)fontstart, "gvar");
+			this.hvar = (int)stbtt__find_table(ptr, (uint)fontstart, "HVAR");
+			this.mvar = (int)stbtt__find_table(ptr, (uint)fontstart, "MVAR");
+			this._variationTablesResolved = false;
+			this._variationTables = null;
 			if (cmap == 0 || this.head == 0 || this.hhea == 0 || this.hmtx == 0)
 				return 0;
 			if (this.glyf != 0)
@@ -322,6 +330,13 @@ namespace StbTrueTypeSharp
 		}
 
 		public int stbtt__GetGlyphShapeTT(int glyph_index, out stbtt_vertex[] pvertices)
+			=> stbtt__GetGlyphShapeTT(glyph_index, Variations.FontVariationNormalizedCoordinates.Default, out pvertices);
+
+		/// <summary>
+		/// TrueType outline at a variation instance. Default coords = the classic un-varied path (this IS the
+		/// original function body; variation enters only at two marked seams).
+		/// </summary>
+		public int stbtt__GetGlyphShapeTT(int glyph_index, in Variations.FontVariationNormalizedCoordinates coords, out stbtt_vertex[] pvertices)
 		{
 			short numberOfContours = 0;
 			FakePtr<byte> endPtsOfContours;
@@ -422,6 +437,11 @@ namespace StbTrueTypeSharp
 					vertices[off + i].y = (short)y;
 				}
 
+				// VARIATION seam: the point arrays are complete; apply gvar deltas (+ IUP) to them BEFORE the
+				// on/off-curve emission below, so the flag/contour logic never knows variation exists.
+				if (!coords.IsDefault)
+					stbtt__ApplyGlyphVariationToSimpleGlyphPoints(glyph_index, coords, vertices, off, n, endPtsOfContours, numberOfContours, g);
+
 				num_vertices = 0;
 				sx = sy = cx = cy = scx = scy = 0;
 				for (i = 0; i < n; ++i)
@@ -503,6 +523,16 @@ namespace StbTrueTypeSharp
 			{
 				var more = 1;
 				var comp = data + g + 10;
+				// VARIATION: gvar "points" of a composite are its components (in record order) + 4 phantoms.
+				// Count the components first so the delta arrays can be sized, then walk the records again.
+				double[] componentOffsetDeltaX = null;
+				double[] componentOffsetDeltaY = null;
+				if (!coords.IsDefault)
+				{
+					int componentCount = stbtt__CountCompositeComponents(comp);
+					componentOffsetDeltaX = stbtt__ComputeCompositeComponentOffsetDeltas(glyph_index, coords, componentCount, g, out componentOffsetDeltaY);
+				}
+				int componentIndex = 0;
 				num_vertices = 0;
 				vertices = null;
 				while (more != 0)
@@ -572,7 +602,18 @@ namespace StbTrueTypeSharp
 
 					m = (float)Math.Sqrt(mtx[0] * mtx[0] + mtx[1] * mtx[1]);
 					n = (float)Math.Sqrt(mtx[2] * mtx[2] + mtx[3] * mtx[3]);
-					comp_num_verts = stbtt_GetGlyphShape(gidx, out comp_verts);
+					// VARIATION (gvar composite rule): component offset deltas apply only to ARGS_ARE_XY_VALUES
+					// components (flag bit 1); the delta-adjusted offset is what the component scale sees. Component
+					// scale/2x2 is never varied. The component itself is fetched at the SAME instance.
+					if (componentOffsetDeltaX != null && (flags & 2) != 0 && componentIndex < componentOffsetDeltaX.Length - Variations.OpenTypeGvarTable.PhantomPointCount)
+					{
+						mtx[4] = (float)Variations.FontVariationNormalization.OtRound(mtx[4] + componentOffsetDeltaX[componentIndex]);
+						mtx[5] = (float)Variations.FontVariationNormalization.OtRound(mtx[5] + componentOffsetDeltaY[componentIndex]);
+					}
+					componentIndex++;
+					comp_num_verts = coords.IsDefault
+						? stbtt_GetGlyphShape(gidx, out comp_verts)
+						: stbtt_GetGlyphShapeVar(gidx, coords, out comp_verts);
 					if (comp_num_verts > 0)
 					{
 						for (i = 0; i < comp_num_verts; ++i)
