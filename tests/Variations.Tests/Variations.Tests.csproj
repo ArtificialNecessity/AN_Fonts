@@ -9,6 +9,8 @@
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.12.0" />
+    <!-- TEST-ONLY independent shaping oracle for Part D (GSUB rvrn): HarfBuzz reads the twin's GSUB with its own code. src/ must never reference HarfBuzz. -->
+    <PackageReference Include="HarfBuzzSharp" Version="8.3.1.1" />
     <PackageReference Include="xunit" Version="2.9.2" />
     <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
   </ItemGroup>

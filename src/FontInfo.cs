@@ -62,6 +62,8 @@ namespace StbTrueTypeSharp
 			this.hmtx = (int)stbtt__find_table(ptr, (uint)fontstart, "hmtx");
 			this.kern = (int)stbtt__find_table(ptr, (uint)fontstart, "kern");
 			this.gpos = (int)stbtt__find_table(ptr, (uint)fontstart, "GPOS");
+			// GSUB (FontInfoGsub.cs): 'rvrn' + FeatureVariations glyph selection (Part D). Located here, parsed lazily.
+			this.gsub = (int)stbtt__find_table(ptr, (uint)fontstart, "GSUB");
 			// OpenType Font Variations (FontInfoVariations.cs): located here, parsed lazily on first use.
 			this.fvar = (int)stbtt__find_table(ptr, (uint)fontstart, "fvar");
 			// GDEF: only its v1.3 ItemVariationStore is used (GPOS VariationIndex deltas, Part C).
@@ -1430,6 +1432,20 @@ namespace StbTrueTypeSharp
 		// Resolves latn/DFLT default-LangSys 'kern' feature lookups ONCE per font.
 		// Returns null when GPOS has no usable kern feature for latn/DFLT — callers
 		// (stbtt_GetGlyphKernAdvance) then fall back to the legacy 'kern' table.
+		//
+		// ── GPOS FeatureVariations: READER EXISTS, HOOK DELIBERATELY ABSENT (spec §9.9, approved 2026-09-02) ──
+		// GPOS 1.1 carries `Offset32 featureVariationsOffset` at byte 10 — the same FeatureVariations / ConditionSet /
+		// FeatureTableSubstitution structure GSUB uses to swap a feature's lookup list per region of design space. A font
+		// MAY use it to give the 'kern' feature different pair lookups at, say, heavy weights. The table-agnostic reader
+		// (Layout/OpenTypeLayoutFeatureVariations.cs) is written and unit-tested on GSUB fixtures + synthetic tables, but
+		// it is NOT wired here because NONE of our variable fonts carries a GPOS FeatureVariations table (all six checked
+		// with fontTools 2026-09-02: `GPOS FV: False`) and untested wiring is where bugs hide. When a fixture arrives:
+		//   var fv = OpenTypeLayoutFeatureVariations.TryParse(data, gpos, gposLength, ttULONG(data+gpos+10), axisCount, "GPOS", ...)
+		//   int rec = fv.FindApplicableRecordIndex(coords);           // per INSTANCE, so this resolution can no longer be cached once per font
+		//   featureTable = rec >= 0 && fv.Records[rec].GetAlternateFeatureTableAbsoluteOffset(featureIndex) is int alt && alt >= 0
+		//                ? data + alt : defaultFeatureTable;
+		// `stbtt_HasUnappliedGposFeatureVariations` (FontInfoGsub.cs) is true for a font that would need this hook, so the
+		// gap is visible rather than silent.
 		private bool[] stbtt__ResolveGposKernLookups()
 		{
 			if (this.gposKernResolved)
@@ -1440,44 +1456,30 @@ namespace StbTrueTypeSharp
 			var data = this.data + this.gpos;
 			if (ttUSHORT(data + 0) != 1)
 				return null;
-			if (ttUSHORT(data + 2) != 0)
+			// Minor version 0 or 1 (1.1 = has the featureVariationsOffset field; see the block comment above).
+			if (ttUSHORT(data + 2) > 1)
 				return null;
 			var scriptList = data + ttUSHORT(data + 4);
 			var featureList = data + ttUSHORT(data + 6);
 			var lookupList = data + ttUSHORT(data + 8);
 			var lookupCount = (int)ttUSHORT(lookupList);
 
-			// Script selection: prefer 'latn', fall back to 'DFLT'; use the default LangSys.
-			var scriptTable = FakePtr<byte>.Null;
-			var dfltScriptTable = FakePtr<byte>.Null;
-			var scriptCount = (int)ttUSHORT(scriptList);
-			for (var si = 0; si < scriptCount; ++si)
-			{
-				var rec = scriptList + 2 + 6 * si;
-				if (rec[0] == 'l' && rec[1] == 'a' && rec[2] == 't' && rec[3] == 'n')
-					scriptTable = scriptList + ttUSHORT(rec + 4);
-				else if (rec[0] == 'D' && rec[1] == 'F' && rec[2] == 'L' && rec[3] == 'T')
-					dfltScriptTable = scriptList + ttUSHORT(rec + 4);
-			}
-
-			if (scriptTable.IsNull)
-				scriptTable = dfltScriptTable;
-			if (scriptTable.IsNull)
+			// Script selection: prefer 'latn', fall back to 'DFLT'; use the default LangSys. ONE implementation shared with
+			// GSUB (Layout/OpenTypeLayoutScriptSelection.cs) so substitution and positioning agree on the LangSys in force.
+			int gposLength = stbtt__find_table_length("GPOS");
+			FakePtr<byte> langSys;
+			if (!Layout.OpenTypeLayoutScriptSelection.TryGetDefaultLangSys(scriptList, gposLength - (scriptList.Offset - data.Offset), out langSys))
 				return null;
-			var defaultLangSysOffset = ttUSHORT(scriptTable);
-			if (defaultLangSysOffset == 0)
-				return null;
-			var langSys = scriptTable + defaultLangSysOffset;
 
 			// Feature selection: mark the lookups of every 'kern' feature in the LangSys,
 			// then apply marked lookups in LookupList INDEX order (OpenType application
 			// order), accumulating adjustments ACROSS lookups.
 			var kernLookups = new bool[lookupCount];
 			var anyKern = false;
-			var featureIndexCount = (int)ttUSHORT(langSys + 4);
+			var featureIndexCount = Layout.OpenTypeLayoutScriptSelection.GetFeatureIndexCount(langSys);
 			for (var fi = 0; fi < featureIndexCount; ++fi)
 			{
-				var featureIndex = ttUSHORT(langSys + 6 + 2 * fi);
+				var featureIndex = Layout.OpenTypeLayoutScriptSelection.GetFeatureIndex(langSys, fi);
 				var featureRec = featureList + 2 + 6 * featureIndex;
 				if (featureRec[0] != 'k' || featureRec[1] != 'e' || featureRec[2] != 'r' || featureRec[3] != 'n')
 					continue;

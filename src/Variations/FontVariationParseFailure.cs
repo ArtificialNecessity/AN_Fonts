@@ -38,6 +38,16 @@ namespace StbTrueTypeSharp.Variations
 		HvarTruncatedHeader = 28,
 		MvarTruncatedHeader = 29,
 		MvarValueRecordsOutOfBounds = 30,
+		// Part D (GSUB rvrn + FeatureVariations, spec §9). "Layout*" codes are table-agnostic (GSUB today, GPOS later).
+		GsubTruncatedHeader = 31,
+		GsubUnsupportedVersion = 32,
+		GsubScriptListOutOfBounds = 33,
+		GsubFeatureListOutOfBounds = 34,
+		GsubLookupListOutOfBounds = 35,
+		LayoutFeatureVariationsTruncated = 36,
+		LayoutFeatureVariationsUnsupportedVersion = 37,
+		LayoutConditionSetTruncated = 38,
+		LayoutFeatureTableSubstitutionTruncated = 39,
 	}
 
 	/// <summary>Rich failure record: which code, which table, and a human-readable detail string.</summary>
