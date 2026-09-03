@@ -19,6 +19,8 @@ namespace StbTrueTypeSharp
 		public int gvar;
 		public int hvar;
 		public int mvar;
+		/// <summary>GDEF table offset (0 = absent). Only its v1.3 ItemVariationStore is consumed (GPOS VariationIndex deltas).</summary>
+		public int gdef;
 
 		private OpenTypeVariationTables _variationTables;
 		private bool _variationTablesResolved;
@@ -116,8 +118,47 @@ namespace StbTrueTypeSharp
 			if (this.mvar != 0 && !OpenTypeMvarTable.TryParse(this.data, this.mvar, stbtt__find_table_length("MVAR"), fvarTable.AxisCount, out mvarTable, out _variationParseFailure))
 				return null;
 
-			_variationTables = new OpenTypeVariationTables(fvarTable, avarTable, gvarTable, hvarTable, mvarTable);
+			// GDEF ItemVariationStore is OPTIONAL and fail-soft: a bad store must not turn a working VF static —
+			// it only means kerning stays at the default instance. Failure is still recorded for diagnostics.
+			OpenTypeItemVariationStore gdefStore = stbtt__TryParseGdefItemVariationStore(fvarTable.AxisCount);
+
+			_variationTables = new OpenTypeVariationTables(fvarTable, avarTable, gvarTable, hvarTable, mvarTable, gdefStore);
 			return _variationTables;
+		}
+
+		/// <summary>
+		/// GDEF header (README §7): majorVersion(u16)=1, minorVersion(u16), then Offset16 ×5 — glyphClassDef, attachList,
+		/// ligCaretList, markAttachClassDef, [v1.2+] markGlyphSetsDef — so the v1.3 Offset32 itemVarStoreOffset sits at
+		/// byte 14 (4 + 5×2). Bring-up bug: reading it at byte 12 returned markGlyphSetsDef<<16, a garbage offset that
+		/// failed the bounds guard SILENTLY and left kerning un-varied — hence the explicit failure record below.
+		/// Returns null for no GDEF, version &lt; 1.3, NULL offset, or a store outside the table; a malformed store is
+		/// recorded in _variationParseFailure and also yields null.
+		/// </summary>
+		private OpenTypeItemVariationStore stbtt__TryParseGdefItemVariationStore(int fvarAxisCount)
+		{
+			if (this.gdef == 0)
+				return null;
+			int gdefLength = stbtt__find_table_length("GDEF");
+			if (gdefLength < 18 || this.gdef + gdefLength > this.data.RemainingLength)
+				return null;
+			var g = this.data + this.gdef;
+			if (ttUSHORT(g) != 1 || ttUSHORT(g + 2) < 3)
+				return null;
+			long storeOffset = ttULONG(g + 14);
+			if (storeOffset == 0)
+				return null;
+			if (storeOffset >= gdefLength)
+			{
+				_variationParseFailure = new FontVariationParseFailure(FontVariationParseFailureCode.ItemVariationStoreTruncated, "GDEF", "itemVarStoreOffset " + storeOffset + " beyond GDEF length " + gdefLength);
+				return null;
+			}
+			if (!OpenTypeItemVariationStore.TryParse(this.data, this.gdef + (int)storeOffset, gdefLength - (int)storeOffset, fvarAxisCount, "GDEF",
+					out OpenTypeItemVariationStore store, out FontVariationParseFailure failure))
+			{
+				_variationParseFailure = failure;
+				return null;
+			}
+			return store;
 		}
 
 		// \u2500\u2500 outline production at a variation instance (README \u00a73) \u2500\u2500
@@ -510,14 +551,22 @@ namespace StbTrueTypeSharp
 			public OpenTypeHvarTable Hvar { get; }
 			/// <summary>Null when absent (font-wide metrics constant across the space).</summary>
 			public OpenTypeMvarTable Mvar { get; }
+			/// <summary>
+			/// GDEF v1.3 ItemVariationStore (README §7) — the delta source for GPOS VariationIndex tables (varied
+			/// kerning, Part C). Null when GDEF is absent, older than 1.3, has a NULL store, or the store is malformed
+			/// (recorded in stbtt_VariationParseFailure; kerning then stays at the default instance — fail-soft).
+			/// </summary>
+			public OpenTypeItemVariationStore GdefItemVariationStore { get; }
 
-			internal OpenTypeVariationTables(OpenTypeFvarTable fvar, OpenTypeAvarTable avar, OpenTypeGvarTable gvar, OpenTypeHvarTable hvar, OpenTypeMvarTable mvar)
+			internal OpenTypeVariationTables(OpenTypeFvarTable fvar, OpenTypeAvarTable avar, OpenTypeGvarTable gvar, OpenTypeHvarTable hvar, OpenTypeMvarTable mvar,
+				OpenTypeItemVariationStore gdefItemVariationStore)
 			{
 				Fvar = fvar;
 				Avar = avar;
 				Gvar = gvar;
 				Hvar = hvar;
 				Mvar = mvar;
+				GdefItemVariationStore = gdefItemVariationStore;
 			}
 		}
 

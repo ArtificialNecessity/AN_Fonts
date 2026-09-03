@@ -65,6 +65,8 @@ namespace StbTrueTypeSharp
 			this.gpos = (int)stbtt__find_table(ptr, (uint)fontstart, "GPOS");
 			// OpenType Font Variations (FontInfoVariations.cs): located here, parsed lazily on first use.
 			this.fvar = (int)stbtt__find_table(ptr, (uint)fontstart, "fvar");
+			// GDEF: only its v1.3 ItemVariationStore is used (GPOS VariationIndex deltas, Part C).
+			this.gdef = (int)stbtt__find_table(ptr, (uint)fontstart, "GDEF");
 			this.avar = (int)stbtt__find_table(ptr, (uint)fontstart, "avar");
 			this.gvar = (int)stbtt__find_table(ptr, (uint)fontstart, "gvar");
 			this.hvar = (int)stbtt__find_table(ptr, (uint)fontstart, "HVAR");
@@ -1182,6 +1184,11 @@ namespace StbTrueTypeSharp
 		}
 
 		public int stbtt__GetGlyphGPOSInfoAdvance(int glyph1, int glyph2)
+			=> stbtt__GetGlyphGPOSInfoAdvance(glyph1, glyph2, Variations.FontVariationNormalizedCoordinates.Default, null);
+
+		// gdefStore: the GDEF ItemVariationStore for VariationIndex deltas (Part C); null = static kerning.
+		private int stbtt__GetGlyphGPOSInfoAdvance(int glyph1, int glyph2,
+			in Variations.FontVariationNormalizedCoordinates coords, Variations.OpenTypeItemVariationStore gdefStore)
 		{
 			var kernLookups = stbtt__ResolveGposKernLookups();
 			if (kernLookups == null)
@@ -1194,7 +1201,7 @@ namespace StbTrueTypeSharp
 				if (!kernLookups[i])
 					continue;
 				var lookupTable = lookupList + ttUSHORT(lookupList + 2 + 2 * i);
-				totalAdvance += stbtt__GPOSLookupPairAdvance(lookupTable, glyph1, glyph2);
+				totalAdvance += stbtt__GPOSLookupPairAdvance(lookupTable, glyph1, glyph2, coords, gdefStore);
 			}
 
 			return totalAdvance;
@@ -1282,7 +1289,8 @@ namespace StbTrueTypeSharp
 		// to the glyph pair. Within a lookup, the FIRST subtable that applies wins.
 		// LookupFlags are deliberately ignored: for base-glyph pair kerning the only flag
 		// seen in target fonts is IgnoreMarks (0x0008), a no-op when neither glyph is a mark.
-		private int stbtt__GPOSLookupPairAdvance(FakePtr<byte> lookupTable, int glyph1, int glyph2)
+		private int stbtt__GPOSLookupPairAdvance(FakePtr<byte> lookupTable, int glyph1, int glyph2,
+			in Variations.FontVariationNormalizedCoordinates coords, Variations.OpenTypeItemVariationStore gdefStore)
 		{
 			var lookupType = (int)ttUSHORT(lookupTable);
 			var subTableCount = (int)ttUSHORT(lookupTable + 4);
@@ -1304,7 +1312,7 @@ namespace StbTrueTypeSharp
 				}
 
 				int xAdvance;
-				if (stbtt__GPOSPairSubtableApply(table, glyph1, glyph2, out xAdvance))
+				if (stbtt__GPOSPairSubtableApplyVar(table, glyph1, glyph2, coords, gdefStore, out xAdvance))
 					return xAdvance; // first applying subtable ends the lookup
 			}
 
@@ -1315,6 +1323,15 @@ namespace StbTrueTypeSharp
 		// (per HarfBuzz semantics: fmt1 = pair record found; fmt2 = coverage + valid classes,
 		// even when the adjustment value is 0). xAdvance is in unscaled font units.
 		public static bool stbtt__GPOSPairSubtableApply(FakePtr<byte> table, int glyph1, int glyph2, out int xAdvance)
+			=> stbtt__GPOSPairSubtableApplyVar(table, glyph1, glyph2, Variations.FontVariationNormalizedCoordinates.Default, null, out xAdvance);
+
+		// Variable-font aware PairPos apply (Part C). When <paramref name="gdefStore"/> is non-null and the
+		// instance is not the default, the X_ADVANCE_DEVICE field (ValueFormat 0x0040) is read: a VariationIndex
+		// table (deltaFormat 0x8000) adds otRound(store delta) to xAdvance; ppem Device tables (0x0001-0x0003)
+		// are ignored (unhinted rendering). Device offsets are relative to the IMMEDIATE PARENT table: the PairSet
+		// for format 1, the PairPos subtable for format 2 (OT spec, ValueRecord) — NOT the ValueRecord.
+		public static bool stbtt__GPOSPairSubtableApplyVar(FakePtr<byte> table, int glyph1, int glyph2,
+			in Variations.FontVariationNormalizedCoordinates coords, Variations.OpenTypeItemVariationStore gdefStore, out int xAdvance)
 		{
 			xAdvance = 0;
 			var posFormat = (int)ttUSHORT(table);
@@ -1332,6 +1349,9 @@ namespace StbTrueTypeSharp
 			var valueRecordSize2 = 2 * stbtt__popcount(valueFormat2);
 			var hasXAdvance = (valueFormat1 & 4) != 0;
 			var xAdvanceOffset = 2 * stbtt__popcount(valueFormat1 & 3);
+			// X_ADVANCE_DEVICE sits after every lower field (xPla yPla xAdv yAdv xPlaDev yPlaDev) that is present.
+			var applyAdvanceVariation = gdefStore != null && !coords.IsDefault && (valueFormat1 & 0x0040) != 0;
+			var xAdvanceDeviceOffsetInRecord = 2 * stbtt__popcount(valueFormat1 & 0x003F);
 
 			switch (posFormat)
 			{
@@ -1356,6 +1376,8 @@ namespace StbTrueTypeSharp
 						{
 							if (hasXAdvance)
 								xAdvance = ttSHORT(pairValue + 2 + xAdvanceOffset);
+							if (applyAdvanceVariation)
+								xAdvance += stbtt__GPOSVariationIndexDelta(pairValueTable, ttUSHORT(pairValue + 2 + xAdvanceDeviceOffsetInRecord), gdefStore, coords);
 							return true;
 						}
 					}
@@ -1374,11 +1396,31 @@ namespace StbTrueTypeSharp
 					var record = table + 16 + (glyph1class * class2Count + glyph2class) * recordSize;
 					if (hasXAdvance)
 						xAdvance = ttSHORT(record + xAdvanceOffset);
+					if (applyAdvanceVariation)
+						xAdvance += stbtt__GPOSVariationIndexDelta(table, ttUSHORT(record + xAdvanceDeviceOffsetInRecord), gdefStore, coords);
 					return true; // fmt2 applies whenever classes resolve (even value 0)
 				}
 				default:
 					return false;
 			}
+		}
+
+		// Reads the Device/VariationIndex table at <paramref name="deviceOffsetFromParent"/> (0 = NULL) and
+		// returns the ROUNDED delta for the instance: only deltaFormat 0x8000 (VariationIndex: outer, inner,
+		// 0x8000) contributes; formats 1-3 are ppem hinting deltas for non-variable fonts and yield 0.
+		// Bounds-checked: a truncated table yields 0 (fail-soft, never throws at draw time).
+		private static int stbtt__GPOSVariationIndexDelta(FakePtr<byte> parentTable, int deviceOffsetFromParent,
+			Variations.OpenTypeItemVariationStore gdefStore, in Variations.FontVariationNormalizedCoordinates coords)
+		{
+			if (deviceOffsetFromParent == 0)
+				return 0;
+			var device = parentTable + deviceOffsetFromParent;
+			if (device.RemainingLength < 6)
+				return 0;
+			if (ttUSHORT(device + 4) != 0x8000)
+				return 0; // ppem Device table (or reserved bits set): not a variation reference
+			int outerIndex = ttUSHORT(device), innerIndex = ttUSHORT(device + 2);
+			return Variations.FontVariationNormalization.OtRound(gdefStore.ComputeDelta(outerIndex, innerIndex, coords));
 		}
 
 		private static int stbtt__popcount(int v)
@@ -1390,13 +1432,29 @@ namespace StbTrueTypeSharp
 
 		public int stbtt_GetGlyphKernAdvance(int g1, int g2)
 		{
+			return stbtt_GetGlyphKernAdvanceVar(g1, g2, Variations.FontVariationNormalizedCoordinates.Default);
+		}
+
+		/// <summary>
+		/// Pair kerning at a variation instance (Part C, README §7): the static GPOS xAdvance PLUS the
+		/// VariationIndex delta from the GDEF ItemVariationStore when the ValueRecord carries one
+		/// (X_ADVANCE_DEVICE, deltaFormat 0x8000) — otRound(Σ regionScalar × delta), the same rule as HVAR.
+		/// Default coords, static fonts, fonts without a GDEF store, and the legacy 'kern' table path are
+		/// byte-identical to <see cref="stbtt_GetGlyphKernAdvance(int,int)"/>. Oracle: fontTools-instanced
+		/// twins' GPOS (tests/graphical/VariableFontTest --strings [ADV] kern Δ) and HarfBuzz.
+		/// </summary>
+		public int stbtt_GetGlyphKernAdvanceVar(int g1, int g2, in Variations.FontVariationNormalizedCoordinates coords)
+		{
 			// GPOS pair kerning when the font exposes a latn/DFLT 'kern' feature;
 			// otherwise fall back to the legacy 'kern' table (also covers fonts whose
 			// GPOS exists but carries no kern feature, e.g. mark/mkmk-only GPOS).
 			// Font-level decision, never mixed per-pair.
 			var xAdvance = 0;
 			if (this.gpos != 0 && stbtt__ResolveGposKernLookups() != null)
-				xAdvance += stbtt__GetGlyphGPOSInfoAdvance(g1, g2);
+			{
+				Variations.OpenTypeItemVariationStore gdefStore = coords.IsDefault ? null : stbtt__GetVariationTables()?.GdefItemVariationStore;
+				xAdvance += stbtt__GetGlyphGPOSInfoAdvance(g1, g2, coords, gdefStore);
+			}
 			else if (this.kern != 0)
 				xAdvance += stbtt__GetGlyphKernInfoAdvance(g1, g2);
 			return xAdvance;
