@@ -26,6 +26,10 @@ namespace Variations.Tests
 			// design as glyf+gvar. Fixtures of the .otf are fontTools' fully-pinned instances = plain 'CFF ' fonts.
 			{ "AdobeVFPrototype.cff2", "AdobeVFPrototype.otf" },
 			{ "AdobeVFPrototype.glyf", "AdobeVFPrototype.ttf" },
+			// Part D (GSUB rvrn + FeatureVariations, spec §9): WPT css-fonts/variations FontStyleTest-slnt-VF. The .ttf is
+			// WPT's .woff2 decompressed. Twins carry the design-position-resolved `rvrn` lookups baked in by fontTools —
+			// their GSUB is the substitution oracle (RequiredVariationAlternatesTests), their glyf the outline oracle.
+			{ "FontStyleTest-slnt-VF", "FontStyleTest-slnt-VF.ttf" },
 		};
 
 		/// <summary>xunit MemberData: every *.instanced.*.ttf in Fonts/.</summary>
