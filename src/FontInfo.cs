@@ -48,13 +48,12 @@ namespace StbTrueTypeSharp
 		public int stbtt_InitFont_internal(byte[] data, int fontstart)
 		{
 			uint cmap = 0;
-			uint t = 0;
-			var i = 0;
-			var numTables = 0;
 			var ptr = new FakePtr<byte>(data);
 			this.data = ptr;
 			this.fontstart = fontstart;
 			this.cff = new Buf(FakePtr<byte>.Null, 0);
+			this.isCff2 = false;
+			this.cff2VariationStoreOffset = 0;
 			cmap = stbtt__find_table(ptr, (uint)fontstart, "cmap");
 			this.loca = (int)stbtt__find_table(ptr, (uint)fontstart, "loca");
 			this.head = (int)stbtt__find_table(ptr, (uint)fontstart, "head");
@@ -92,6 +91,12 @@ namespace StbTrueTypeSharp
 				uint cff = 0;
 				cff = stbtt__find_table(ptr, (uint)fontstart, "CFF ");
 				if (cff == 0)
+				{
+					// Part B: CFF2 outlines (variable or static) — README §8.1. Separate reader because the header,
+					// TopDICT keys and INDEX count width all differ from 'CFF '.
+					return stbtt__InitCff2(ptr, cmap) ? stbtt__InitFont_finish(ptr, cmap) : 0;
+				}
+				if (cff == 0)
 					return 0;
 				this.fontdicts = new Buf(FakePtr<byte>.Null, 0);
 				this.fdselect = new Buf(FakePtr<byte>.Null, 0);
@@ -127,7 +132,78 @@ namespace StbTrueTypeSharp
 				this.charstrings = b.stbtt__cff_get_index();
 			}
 
-			t = stbtt__find_table(ptr, (uint)fontstart, "maxp");
+			return stbtt__InitFont_finish(ptr, cmap);
+		}
+
+		/// <summary>True when the outlines come from a CFF2 table (Part B): CFF2 INDEX counts are uint32, charstrings
+		/// carry no width and no endchar, and 'blend'/'vsindex' may appear (README §8.1). Every <c>cff.size != 0</c>
+		/// branch still treats the font as CFF-outlined; this flag selects the CFF2 deviations inside those paths.</summary>
+		public bool isCff2;
+		/// <summary>Absolute offset (in <c>data</c>) of the CFF2 VariationStore (TopDICT key 24): <c>uint16 length</c> then
+		/// an ItemVariationStore. 0 when the CFF2 table has no variations. Parsed lazily with the fvar tables.</summary>
+		public int cff2VariationStoreOffset;
+
+		/// <summary>
+		/// CFF2 table reader (OpenType CFF2 chapter; README §8.1/§8.3 step 1). Header: major(1) minor(1) headerSize(1)
+		/// topDICTSize(2); TopDICT at headerSize; GlobalSubrINDEX at headerSize + topDICTSize. TopDICT keys:
+		/// CharStringINDEXOffset(17), VariationStoreOffset(24), FontDICTINDEXOffset(12 36), FontDICTSelectOffset(12 37).
+		/// Every FontDICT's PrivateDICTOffset(18) is 'size offset' from the CFF2 start, exactly like 'CFF ' — so
+		/// Buf.stbtt__get_subrs and stbtt__cid_get_glyph_subrs are reused as-is (with the uint32 INDEX counts).
+		/// Populates the same fields the 'CFF ' path does (cff, gsubrs, charstrings, fontdicts, fdselect, subrs).
+		/// </summary>
+		private bool stbtt__InitCff2(FakePtr<byte> ptr, uint cmap)
+		{
+			uint cff2 = stbtt__find_table(ptr, (uint)fontstart, "CFF2");
+			if (cff2 == 0)
+				return false;
+			int cff2Length = stbtt__find_table_length("CFF2");
+			if (cff2Length < 5)
+				return false;
+			this.isCff2 = true;
+			this.fontdicts = new Buf(FakePtr<byte>.Null, 0).AsCff2();
+			this.fdselect = new Buf(FakePtr<byte>.Null, 0).AsCff2();
+			this.cff = new Buf(new FakePtr<byte>(ptr, (int)cff2), (ulong)cff2Length).AsCff2();
+			Buf b = this.cff.Clone();
+			int majorVersion = b.stbtt__buf_get8();
+			b.stbtt__buf_get8(); // minorVersion
+			int headerSize = b.stbtt__buf_get8();
+			int topDictSize = (int)b.stbtt__buf_get(2);
+			if (majorVersion != 2 || headerSize < 5 || headerSize + topDictSize > cff2Length)
+				return false;
+			Buf topdict = b.stbtt__buf_range(headerSize, topDictSize);
+			b.stbtt__buf_seek(headerSize + topDictSize);
+			this.gsubrs = b.stbtt__cff_get_index();
+
+			uint charstringsOffset = 0, variationStoreOffset = 0, fdArrayOffset = 0, fdSelectOffset = 0;
+			topdict.stbtt__dict_get_ints_default(17, ref charstringsOffset);
+			topdict.stbtt__dict_get_ints_default(24, ref variationStoreOffset);
+			topdict.stbtt__dict_get_ints_default(0x100 | 36, ref fdArrayOffset);
+			topdict.stbtt__dict_get_ints_default(0x100 | 37, ref fdSelectOffset);
+			if (charstringsOffset == 0 || charstringsOffset >= (uint)cff2Length || fdArrayOffset == 0 || fdArrayOffset >= (uint)cff2Length)
+				return false;
+
+			b.stbtt__buf_seek((int)fdArrayOffset);
+			this.fontdicts = b.stbtt__cff_get_index();
+			if (this.fontdicts.stbtt__cff_index_count() < 1)
+				return false;
+			if (fdSelectOffset != 0 && fdSelectOffset < (uint)cff2Length)
+				this.fdselect = b.stbtt__buf_range((int)fdSelectOffset, (int)(cff2Length - fdSelectOffset));
+			// FontDICT#0's local subroutines are the default 'subrs' (the 'CFF ' path uses the TopDICT Private; CFF2 has
+			// no TopDICT Private). Glyphs mapped by FontDICTSelect to another FD re-resolve via stbtt__cid_get_glyph_subrs.
+			this.subrs = Buf.stbtt__get_subrs(this.cff.Clone(), this.fontdicts.stbtt__cff_index_get(0));
+			b.stbtt__buf_seek((int)charstringsOffset);
+			this.charstrings = b.stbtt__cff_get_index();
+			this.cff2VariationStoreOffset = variationStoreOffset != 0 && variationStoreOffset + 2 < (uint)cff2Length
+				? (int)(cff2 + variationStoreOffset) : 0;
+			return true;
+		}
+
+		/// <summary>Tail of stbtt_InitFont_internal shared by the glyf, 'CFF ' and CFF2 paths: maxp, cmap encoding
+		/// record selection, indexToLocFormat.</summary>
+		private int stbtt__InitFont_finish(FakePtr<byte> ptr, uint cmap)
+		{
+			int i, numTables;
+			uint t = stbtt__find_table(ptr, (uint)fontstart, "maxp");
 			if (t != 0)
 				this.numGlyphs = ttUSHORT(ptr + t + 4);
 			else
@@ -294,7 +370,9 @@ namespace StbTrueTypeSharp
 		{
 			if (this.cff.size != 0)
 			{
-				stbtt__GetGlyphInfoT2(glyph_index, ref x0, ref y0, ref x1, ref y1);
+				// An EMPTY charstring (space; CFF2 zero-length or 'CFF ' bare endchar) has no box — report 0 like the glyf path.
+				if (stbtt__GetGlyphInfoT2(glyph_index, ref x0, ref y0, ref x1, ref y1) == 0)
+					return 0;
 			}
 			else
 			{
@@ -683,13 +761,81 @@ namespace StbTrueTypeSharp
 					start = end;
 				}
 			}
+			else if (fmt == 4)
+			{
+				// CFF2 FontDICTSelect format 4 (README §8.1): uint32 numRanges, Range4 { uint32 first, uint16 fontDICTID },
+				// uint32 sentinel — a glyph belongs to the range whose 'first' <= glyph < next 'first' (sentinel last).
+				nranges = (int)fdselect.stbtt__buf_get(4);
+				start = (int)fdselect.stbtt__buf_get(4);
+				for (i = 0; i < nranges; i++)
+				{
+					v = (int)fdselect.stbtt__buf_get(2);
+					end = (int)fdselect.stbtt__buf_get(4);
+					if (glyph_index >= start && glyph_index < end)
+					{
+						fdselector = v;
+						break;
+					}
+					start = end;
+				}
+			}
 
 			if (fdselector == -1)
-				new Buf(FakePtr<byte>.Null, 0);
+				return new Buf(FakePtr<byte>.Null, 0);
 			return Buf.stbtt__get_subrs(this.cff, fontdicts.stbtt__cff_index_get(fdselector));
 		}
 
+		/// <summary>
+		/// CFF2 (README §8.2): the initial ItemVariationData index for a glyph's charstring = the 'vsindex' (key 22) of
+		/// the PrivateDICT of the glyph's FontDICT, default 0. A charstring-level vsindex (0x0F) overrides it.
+		/// FontDICT = FontDICTSelect(glyph) when present, else FontDICT#0.
+		/// </summary>
+		private int stbtt__cff2_private_dict_vsindex(int glyph_index)
+		{
+			int fdIndex = 0;
+			if (this.fdselect.size != 0)
+			{
+				var fdselect = this.fdselect;
+				fdselect.stbtt__buf_seek(0);
+				int fmt = fdselect.stbtt__buf_get8();
+				if (fmt == 0) { fdselect.stbtt__buf_skip(glyph_index); fdIndex = fdselect.stbtt__buf_get8(); }
+				else if (fmt == 3 || fmt == 4)
+				{
+					int countBytes = fmt == 3 ? 2 : 4, fdBytes = fmt == 3 ? 1 : 2;
+					int nranges = (int)fdselect.stbtt__buf_get(countBytes);
+					int start = (int)fdselect.stbtt__buf_get(countBytes);
+					for (int r = 0; r < nranges; r++)
+					{
+						int fd = (int)fdselect.stbtt__buf_get(fdBytes);
+						int end = (int)fdselect.stbtt__buf_get(countBytes);
+						if (glyph_index >= start && glyph_index < end) { fdIndex = fd; break; }
+						start = end;
+					}
+				}
+			}
+			var privateLoc = new uint[2];
+			fontdicts.stbtt__cff_index_get(fdIndex).stbtt__dict_get_ints(18, 2, new FakePtr<uint>(privateLoc));
+			if (privateLoc[0] == 0 || privateLoc[1] == 0) return 0;
+			uint vsindex = 0;
+			this.cff.stbtt__buf_range((int)privateLoc[1], (int)privateLoc[0]).stbtt__dict_get_ints_default(22, ref vsindex);
+			return (int)vsindex;
+		}
+
 		public int stbtt__run_charstring(int glyph_index, CharStringContext c)
+			=> stbtt__run_charstring(glyph_index, c, Variations.FontVariationNormalizedCoordinates.Default);
+
+		/// <summary>CFF2 operand-stack limit (OpenType CFF2 "Decoding DICT and CharString data": 513). 'CFF ' allows 48.</summary>
+		private const int Cff2MaxOperandStackDepth = 513;
+
+		/// <summary>
+		/// Type 2 / CFF2 charstring interpreter. CFF2 deviations (README §8.1/§8.2), active only when isCff2:
+		/// operand stack 513 (blend deltas ride the stack), no 'endchar'/'return' — a charstring or subroutine ends
+		/// at the end of its data (subroutine ⇒ implicit return; top level ⇒ close_shape + success), 'vsindex'
+		/// (0x0F) selects the ItemVariationData whose regions scale the deltas, 'blend' (0x10) folds n×k deltas into
+		/// n defaults using those scalars at <paramref name="coords"/>. Default coords ⇒ all scalars 0 ⇒ blend returns
+		/// the defaults: the CFF2 no-op proof is "blend with zero scalars", never "skip blend".
+		/// </summary>
+		public int stbtt__run_charstring(int glyph_index, CharStringContext c, in Variations.FontVariationNormalizedCoordinates coords)
 		{
 			var in_header = 1;
 			var maskbits = 0;
@@ -700,7 +846,7 @@ namespace StbTrueTypeSharp
 			var b0 = 0;
 			var has_subrs = 0;
 			var clear_stack = 0;
-			var s = new float[48];
+			var s = new float[Cff2MaxOperandStackDepth]; // 513 for CFF2; the CFF limit (48) is a subset
 			var subr_stack = new Buf[10];
 			for (i = 0; i < subr_stack.Length; ++i)
 				subr_stack[i] = null;
@@ -708,8 +854,28 @@ namespace StbTrueTypeSharp
 			var subrs = this.subrs;
 			float f = 0;
 			var b = this.charstrings.stbtt__cff_index_get(glyph_index);
-			while (b.cursor < b.size)
+
+			// CFF2 variation state (README §8.2): active ItemVariationData + its lazily computed region scalars.
+			Variations.OpenTypeItemVariationStore cff2Store = this.isCff2 ? stbtt__GetVariationTables()?.Cff2VariationStore : null;
+			int activeItemVariationData = this.isCff2 && cff2Store != null ? stbtt__cff2_private_dict_vsindex(glyph_index) : 0;
+			double[] regionScalars = null;
+			int activeRegionCount = -1; // -1 = not computed for the active ivd yet
+
+			while (true)
 			{
+				if (b.cursor >= b.size)
+				{
+					if (!this.isCff2)
+						return 0; // 'CFF ': running off the end without endchar is malformed
+					// CFF2: end of data IS the return (subroutine) / the end of the glyph (top level).
+					if (subr_stack_height > 0)
+					{
+						b = subr_stack[--subr_stack_height];
+						continue;
+					}
+					c.stbtt__csctx_close_shape();
+					return 1;
+				}
 				i = 0;
 				clear_stack = 1;
 				b0 = b.stbtt__buf_get8();
@@ -876,6 +1042,54 @@ namespace StbTrueTypeSharp
 					case 0x0E:
 						c.stbtt__csctx_close_shape();
 						return 1;
+					case 0x0F: // CFF2 vsindex: [ ivd ] — select the ItemVariationData for subsequent blends
+						if (!this.isCff2 || sp < 1)
+							return 0;
+						activeItemVariationData = (int)s[sp - 1];
+						activeRegionCount = -1; // scalars recomputed on the next blend
+						break;
+					case 0x10: // CFF2 blend: [ ... n defaults, n*k deltas, n ] -> [ ... n blended values ]
+					{
+						if (!this.isCff2 || cff2Store == null || sp < 1)
+							return 0;
+						if (activeRegionCount < 0)
+						{
+							activeRegionCount = cff2Store.GetRegionIndexCount(activeItemVariationData);
+							if (activeRegionCount < 0)
+								return 0;
+							if (regionScalars == null || regionScalars.Length < activeRegionCount)
+								regionScalars = new double[Math.Max(activeRegionCount, 1)];
+							if (cff2Store.GetRegionScalars(activeItemVariationData, coords, regionScalars) != activeRegionCount)
+								return 0;
+						}
+						int blendCount = (int)s[sp - 1];
+						int k = activeRegionCount;
+						if (blendCount < 0 || blendCount > 513 || sp < 1 + blendCount + blendCount * k)
+							return 0;
+						int baseIndex = sp - 1 - blendCount - blendCount * k;
+						for (int valueIndex = 0; valueIndex < blendCount; valueIndex++)
+						{
+							double deltaSum = 0.0;
+							int deltaStart = baseIndex + blendCount + valueIndex * k;
+							for (int region = 0; region < k; region++)
+							{
+								double scalar = regionScalars[region];
+								if (scalar != 0.0)
+									deltaSum += scalar * s[deltaStart + region];
+							}
+							// ORACLE PARITY (fontTools varLib.instancer.instantiateCFF2, read 2026-09-02): the instancer rounds
+							// the DELTA SUM with Python round() — half-to-EVEN — and adds it to the untouched default:
+							//     value = default + round_half_even(Σ scalar·delta)
+							// Operands are RELATIVE coordinates, so any other tie-break (otRound on the total broke ties
+							// upward) accumulates along a contour: measured 2–6 unit drifts at fractional scalars (CNTR 50)
+							// and even flips close_shape's start!=end test. FreeType keeps 16.16 fixed here instead — a
+							// sub-unit divergence from Chrome we accept in exchange for an exact fixture oracle.
+							s[baseIndex + valueIndex] = (float)(s[baseIndex + valueIndex] + Math.Round(deltaSum, MidpointRounding.ToEven));
+						}
+						sp = baseIndex + blendCount;
+						clear_stack = 0; // the blended operands stay for the path operator that follows
+						break;
+					}
 					case 0x0C:
 					{
 						float dx1 = 0;
@@ -983,7 +1197,7 @@ namespace StbTrueTypeSharp
 							f = (short)b.stbtt__cff_int();
 						}
 
-						if (sp >= 48)
+						if (sp >= s.Length) // 48 for 'CFF ' semantics is a subset of the 513-entry CFF2 stack
 							return 0;
 						s[sp++] = f;
 						clear_stack = 0;
@@ -993,20 +1207,22 @@ namespace StbTrueTypeSharp
 				if (clear_stack != 0)
 					sp = 0;
 			}
-
-			return 0;
 		}
 
 		public int stbtt__GetGlyphShapeT2(int glyph_index, out stbtt_vertex[] pvertices)
+			=> stbtt__GetGlyphShapeT2(glyph_index, Variations.FontVariationNormalizedCoordinates.Default, out pvertices);
+
+		/// <summary>Type 2 / CFF2 outline at a variation instance (coords only matter for CFF2 'blend'; ignored by 'CFF ').</summary>
+		public int stbtt__GetGlyphShapeT2(int glyph_index, in Variations.FontVariationNormalizedCoordinates coords, out stbtt_vertex[] pvertices)
 		{
 			var count_ctx = new CharStringContext();
 			count_ctx.bounds = 1;
 			var output_ctx = new CharStringContext();
-			if (stbtt__run_charstring(glyph_index, count_ctx) != 0)
+			if (stbtt__run_charstring(glyph_index, count_ctx, coords) != 0)
 			{
 				pvertices = new stbtt_vertex[count_ctx.num_vertices];
 				output_ctx.pvertices = pvertices;
-				if (stbtt__run_charstring(glyph_index, output_ctx) != 0)
+				if (stbtt__run_charstring(glyph_index, output_ctx, coords) != 0)
 					return output_ctx.num_vertices;
 			}
 

@@ -163,6 +163,41 @@ namespace StbTrueTypeSharp.Variations
 			}
 			return net;
 		}
+
+		/// <summary>
+		/// CFF2 'blend' support (README §8.2): the ACTIVE ItemVariationData (selected by vsindex) contributes only its
+		/// regionIndexes — CFF2 stores the deltas in the charstring, not in the store (itemCount == 0). Fills
+		/// <paramref name="scalars"/>[0..k) with the tent scalar of each listed region at the instance and returns k
+		/// (the number of deltas each blended operand carries). Returns -1 for an out-of-range / NULL subtable or a
+		/// buffer too small for k. Default coords ⇒ every scalar 0 (blend then yields the default operands).
+		/// </summary>
+		public int GetRegionScalars(int itemVariationDataIndex, in FontVariationNormalizedCoordinates instance, double[] scalars)
+		{
+			if (itemVariationDataIndex < 0 || itemVariationDataIndex >= _itemVariationDataOffsets.Length) return -1;
+			int dataOffset = _itemVariationDataOffsets[itemVariationDataIndex];
+			if (dataOffset == 0) return -1;
+			var d = _fontData + dataOffset;
+			int regionIndexCount = ttUSHORT(d + 4);
+			if (scalars == null || scalars.Length < regionIndexCount) return -1;
+			long regionIndexesEnd = dataOffset + 6L + regionIndexCount * 2L;
+			if (regionIndexesEnd > _storeOffset + (long)_storeLength) return -1;
+			for (int column = 0; column < regionIndexCount; column++)
+			{
+				int regionIndex = ttUSHORT(d + 6 + column * 2);
+				scalars[column] = regionIndex < _regionPeak.Length && !instance.IsDefault
+					? OpenTypeVariationRegionScalar.Compute(instance, _regionStart[regionIndex], _regionPeak[regionIndex], _regionEnd[regionIndex], AxisCount)
+					: 0.0;
+			}
+			return regionIndexCount;
+		}
+
+		/// <summary>regionIndexCount of one ItemVariationData (k for CFF2 blend), or -1 when absent.</summary>
+		public int GetRegionIndexCount(int itemVariationDataIndex)
+		{
+			if (itemVariationDataIndex < 0 || itemVariationDataIndex >= _itemVariationDataOffsets.Length) return -1;
+			int dataOffset = _itemVariationDataOffsets[itemVariationDataIndex];
+			return dataOffset == 0 ? -1 : ttUSHORT(_fontData + dataOffset + 4);
+		}
 	}
 
 	/// <summary>

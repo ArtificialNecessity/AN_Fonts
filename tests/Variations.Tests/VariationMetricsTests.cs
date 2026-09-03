@@ -16,6 +16,9 @@ namespace Variations.Tests
 			// fontTools' instancer DROPS HVAR for fully-pinned glyf fonts and writes the gvar PHANTOM-derived advance
 			// into hmtx (instancer/__init__.py _instantiateVHVAR), so the fixture pins the phantom math exactly.
 			FontInfo variableFont = VariationFixtureCatalog.LoadFont(VariationFixtureCatalog.SourceVariableFontFileFor(instancedFileName));
+			// CFF2 has no phantom points (README §8.2) — the phantom path does not exist for it; HVAR parity is covered
+			// by ProductionAdvance_HvarWins_AndMatchesTwinWhereFontIsSelfConsistent.
+			if (variableFont.isCff2) return;
 			FontInfo instancedTwin = VariationFixtureCatalog.LoadFont(instancedFileName);
 			var coords = variableFont.stbtt_NormalizeVariationRequest(VariationFixtureCatalog.DesignPositionOf(instancedFileName));
 			var failures = new List<string>();
@@ -31,6 +34,24 @@ namespace Variations.Tests
 			Assert.True(failures.Count == 0, $"{instancedFileName}: {failures.Count}+ advance mismatches:\n" + string.Join("\n", failures));
 		}
 
+		/// <summary>
+		/// fontTools' _instantiateVHVAR writes hmtx = default + Python round(HVAR delta) — HALF-TO-EVEN — while the
+		/// renderer convention we implement is otRound (half-up; HarfBuzz roundf, FreeType FT_fixedToInt = Chrome).
+		/// The two differ only when the HVAR delta is an exact .5 tie (CFF2 fixtures at CNTR 50: 7 glyphs). glyf
+		/// fixtures never hit this because fontTools drops HVAR there and writes phantom-derived otRound advances.
+		/// Accepts a twin advance iff it is exactly that tie-break of the same delta — anything else is a real error.
+		/// </summary>
+		private static bool IsFontToolsHalfEvenTie(FontInfo variableFont, int glyph, in FontVariationNormalizedCoordinates coords, int twinAdvance)
+		{
+			var hvar = variableFont.stbtt__GetVariationTables()?.Hvar;
+			if (hvar == null) return false;
+			int defaultAdvance = 0, defaultLsb = 0;
+			variableFont.stbtt_GetGlyphHMetrics(glyph, ref defaultAdvance, ref defaultLsb);
+			double delta = hvar.ComputeAdvanceWidthDelta(glyph, coords);
+			bool isExactTie = Math.Abs(delta - Math.Floor(delta) - 0.5) < 1e-9;
+			return isExactTie && twinAdvance == defaultAdvance + (int)Math.Round(delta, MidpointRounding.ToEven);
+		}
+
 		[Theory]
 		[MemberData(nameof(VariationFixtureCatalog.AllInstancedFixtures), MemberType = typeof(VariationFixtureCatalog))]
 		public void ProductionAdvance_HvarWins_AndMatchesTwinWhereFontIsSelfConsistent(string instancedFileName)
@@ -38,6 +59,8 @@ namespace Variations.Tests
 			// Production rule: HVAR wins (spec/FreeType/HarfBuzz). Where the font's HVAR agrees with its phantoms the
 			// fixture is an exact oracle. Where they DISAGREE the font itself is inconsistent; we record those glyphs
 			// and require them to be the known set (Inter.var.subset '.notdef': HVAR -156/+260 vs phantom 0).
+			// CFF2 (Part B): no phantom points exist, HVAR is the ONLY advance source, and fontTools writes exactly
+			// default + otRound(HVAR delta) into the twin's hmtx — every glyph must match, no self-consistency set.
 			FontInfo variableFont = VariationFixtureCatalog.LoadFont(VariationFixtureCatalog.SourceVariableFontFileFor(instancedFileName));
 			FontInfo instancedTwin = VariationFixtureCatalog.LoadFont(instancedFileName);
 			var coords = variableFont.stbtt_NormalizeVariationRequest(VariationFixtureCatalog.DesignPositionOf(instancedFileName));
@@ -47,10 +70,13 @@ namespace Variations.Tests
 			{
 				int hvarAdvance = 0, lsb = 0, twinAdvance = 0, twinLsb = 0;
 				variableFont.stbtt_GetGlyphHMetricsVar(glyph, coords, ref hvarAdvance, ref lsb);
-				variableFont.stbtt__TryGetPhantomDerivedAdvanceVar(glyph, coords, out int phantomAdvance);
 				instancedTwin.stbtt_GetGlyphHMetrics(glyph, ref twinAdvance, ref twinLsb);
-				if (hvarAdvance != phantomAdvance) { selfInconsistentGlyphs.Add(glyph); continue; }
-				if (hvarAdvance != twinAdvance)
+				if (!variableFont.isCff2)
+				{
+					variableFont.stbtt__TryGetPhantomDerivedAdvanceVar(glyph, coords, out int phantomAdvance);
+					if (hvarAdvance != phantomAdvance) { selfInconsistentGlyphs.Add(glyph); continue; }
+				}
+				if (hvarAdvance != twinAdvance && !IsFontToolsHalfEvenTie(variableFont, glyph, coords, twinAdvance))
 					failures.Add($"glyph {glyph}: advance ours={hvarAdvance} twin={twinAdvance}");
 			}
 			Assert.True(failures.Count == 0, $"{instancedFileName}: {failures.Count} advance mismatches:\n" + string.Join("\n", failures));
@@ -65,6 +91,9 @@ namespace Variations.Tests
 		public void EveryGlyphLeftSideBearing_MatchesInstancedTwinHmtx_WithinOneUnit(string instancedFileName)
 		{
 			// fontTools writes lsb = otRound(xMin_varied - leftPhantomX_varied) into the instanced hmtx.
+			// CFF2 (Part B): fontTools leaves hmtx lsb at the DEFAULT instance (no phantom points, HVAR has no LsbMap —
+			// checked 2026-09-02: twin hmtx lsb == VF default lsb while the twin's own outline starts elsewhere), so the
+			// twin's hmtx is STALE and the oracle is the twin's outline bbox xMin — which is what our lsb computes.
 			FontInfo variableFont = VariationFixtureCatalog.LoadFont(VariationFixtureCatalog.SourceVariableFontFileFor(instancedFileName));
 			FontInfo instancedTwin = VariationFixtureCatalog.LoadFont(instancedFileName);
 			var coords = variableFont.stbtt_NormalizeVariationRequest(VariationFixtureCatalog.DesignPositionOf(instancedFileName));
@@ -73,7 +102,15 @@ namespace Variations.Tests
 			{
 				int oursAdvance = 0, oursLsb = 0, twinAdvance = 0, twinLsb = 0;
 				variableFont.stbtt_GetGlyphHMetricsVar(glyph, coords, ref oursAdvance, ref oursLsb);
-				instancedTwin.stbtt_GetGlyphHMetrics(glyph, ref twinAdvance, ref twinLsb);
+				if (variableFont.isCff2)
+				{
+					int bx0 = 0, by0 = 0, bx1 = 0, by1 = 0;
+					if (instancedTwin.stbtt_GetGlyphBox(glyph, ref bx0, ref by0, ref bx1, ref by1) == 0)
+						continue; // empty glyph: lsb is the default value on both sides by construction
+					twinLsb = bx0;
+				}
+				else
+					instancedTwin.stbtt_GetGlyphHMetrics(glyph, ref twinAdvance, ref twinLsb);
 				if (Math.Abs(oursLsb - twinLsb) > 1)
 					failures.Add($"glyph {glyph}: lsb ours={oursLsb} twin={twinLsb}");
 				if (failures.Count > 40) break;

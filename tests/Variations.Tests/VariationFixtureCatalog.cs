@@ -22,6 +22,10 @@ namespace Variations.Tests
 			{ "Inter.var.subset", "Inter.var.subset.ttf" },
 			{ "NotoSansSymbols-VariableFont_wght", "NotoSansSymbols-VariableFont_wght.ttf" },
 			{ "RobotoFlex", "RobotoFlex-VariableFont_GRAD,XOPQ,XTRA,YOPQ,YTAS,YTDE,YTFI,YTLC,YTUC,opsz,slnt,wdth,wght.ttf" },
+			// Part B (CFF2): Adobe Variable Font Prototype — the .otf is CFF2 (blend/vsindex), the .ttf is the same
+			// design as glyf+gvar. Fixtures of the .otf are fontTools' fully-pinned instances = plain 'CFF ' fonts.
+			{ "AdobeVFPrototype.cff2", "AdobeVFPrototype.otf" },
+			{ "AdobeVFPrototype.glyf", "AdobeVFPrototype.ttf" },
 		};
 
 		/// <summary>xunit MemberData: every *.instanced.*.ttf in Fonts/.</summary>

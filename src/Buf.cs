@@ -5,6 +5,14 @@ namespace StbTrueTypeSharp
 		public int cursor;
 		public FakePtr<byte> data;
 		public int size;
+		/// <summary>
+		/// Width of the INDEX 'count' field: 2 for 'CFF ' (Card16), 4 for CFF2 (uint32; OpenType CFF2 "INDEX data",
+		/// _EXTERNAL_APIS/OpenType/README_variations_implementation_notes.md §8.1). Inherited by every sub-range and
+		/// every INDEX cut from this buffer, so a CFF2 table tags itself once at load and all readers follow.
+		/// </summary>
+		public int indexCountBytes = CffIndexCountBytes;
+		public const int CffIndexCountBytes = 2;
+		public const int Cff2IndexCountBytes = 4;
 
 		public Buf(FakePtr<byte> p, ulong size)
 		{
@@ -17,6 +25,7 @@ namespace StbTrueTypeSharp
 		{
 			var clone = new Buf(data, (ulong)size);
 			clone.cursor = cursor;
+			clone.indexCountBytes = indexCountBytes;
 			return clone;
 		}
 
@@ -56,6 +65,7 @@ namespace StbTrueTypeSharp
 		public Buf stbtt__buf_range(int o, int s)
 		{
 			var r = new Buf(FakePtr<byte>.Null, 0);
+			r.indexCountBytes = indexCountBytes; // sub-ranges of a CFF2 table are CFF2 too
 			if (o < 0 || s < 0 || o > size || s > size - o)
 				return r;
 			r.data = data + o;
@@ -69,7 +79,7 @@ namespace StbTrueTypeSharp
 			var start = 0;
 			var offsize = 0;
 			start = cursor;
-			count = (int)stbtt__buf_get(2);
+			count = (int)stbtt__buf_get(indexCountBytes);
 			if (count != 0)
 			{
 				offsize = stbtt__buf_get8();
@@ -168,7 +178,7 @@ namespace StbTrueTypeSharp
 		public int stbtt__cff_index_count()
 		{
 			stbtt__buf_seek(0);
-			return (int)stbtt__buf_get(2);
+			return (int)stbtt__buf_get(indexCountBytes);
 		}
 
 		public Buf stbtt__cff_index_get(int i)
@@ -178,12 +188,14 @@ namespace StbTrueTypeSharp
 			var start = 0;
 			var end = 0;
 			stbtt__buf_seek(0);
-			count = (int)stbtt__buf_get(2);
+			count = (int)stbtt__buf_get(indexCountBytes);
 			offsize = stbtt__buf_get8();
 			stbtt__buf_skip(i * offsize);
 			start = (int)stbtt__buf_get(offsize);
 			end = (int)stbtt__buf_get(offsize);
-			return stbtt__buf_range(2 + (count + 1) * offsize + start, end - start);
+			// Object data begins at count + offSize(1) + offsets[(count+1)*offsize]; INDEX offsets are 1-based
+			// ("from the byte preceding object data"), hence the -1 folded into the constant.
+			return stbtt__buf_range(indexCountBytes + (count + 1) * offsize + start, end - start);
 		}
 
 		public static Buf stbtt__get_subrs(Buf cff, Buf fontdict)
@@ -217,6 +229,13 @@ namespace StbTrueTypeSharp
 			if (n < 0 || n >= count)
 				return new Buf(FakePtr<byte>.Null, 0);
 			return stbtt__cff_index_get(n);
+		}
+
+		/// <summary>The same buffer flagged as CFF2 (INDEX counts are uint32; README §8.1). Cursor preserved.</summary>
+		public Buf AsCff2()
+		{
+			indexCountBytes = Cff2IndexCountBytes;
+			return this;
 		}
 	}
 }
