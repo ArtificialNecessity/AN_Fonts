@@ -106,6 +106,26 @@ FIXTURE_PLAN = [
             {"wght": 900, "CNTR": 100},
         ],
     ),
+    # ── Part D (GSUB rvrn + FeatureVariations): WPT css-fonts/variations FontStyleTest-slnt-VF (Stephen Nixon /
+    # ArrowType vf-slnt-test, OFL). slnt -15..0 (default 0), NO avar. GSUB 1.1 with an `rvrn` feature whose DEFAULT
+    # lookup list is EMPTY and a FeatureVariations table:
+    #   slnt normalized in [-1.0, -0.5]     -> lookup 0: a..z (21 glyphs) -> *.italic
+    #   slnt normalized in [-0.4999, 0.0]   -> lookup 1: f g i l r        -> *.mono
+    # so even the DEFAULT instance is not a substitution no-op. fontTools' instancer evaluates the ConditionSets
+    # at the pinned location and bakes the winning lookups into the twin's plain `rvrn` feature (FeatureVariations
+    # dropped) -- the twin's GSUB is the substitution oracle, exactly like its glyf is the outline oracle.
+    # The .woff2 is WPT's file verbatim; the .ttf is the same sfnt decompressed (fontTools, flavor=None).
+    (
+        "FontStyleTest-slnt-VF.ttf",
+        "FontStyleTest-slnt-VF",
+        [
+            {},                              # slnt 0: norm 0.0 -> record 2 (mono) applies
+            {"slnt": -14},                   # the WPT slnt-variable.html value (italic/oblique = 14deg): norm -0.9333 -> italic
+            {"slnt": -15},                   # axis min: norm -1.0
+            {"slnt": -7.5},                  # EXACTLY the knee: norm -0.5 is INCLUSIVE in record 1 -> italic
+            {"slnt": -7},                    # just above the knee: norm -0.4667 -> record 2 -> mono
+        ],
+    ),
 ]
 
 
