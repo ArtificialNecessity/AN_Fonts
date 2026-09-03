@@ -24,6 +24,35 @@ namespace StbTrueTypeSharp
 		public int numGlyphs;
 		public Buf subrs = null;
 		public int svg;
+		// Vertical metrics tables (0 = absent).
+		public int vhea;
+		public int vmtx;
+		// Colour bitmap strike tables (0 = absent) — plans/color_glyph_fonts.md §3.4.
+		public int cblc;
+		public int cbdt;
+		public int sbix;
+		/// <summary>Which outline source (if any) this face carries. <see cref="TrueTypeOutlineFormat.None"/> is a
+		/// VALID loaded state for colour-bitmap-only fonts: every outline query then reports an empty glyph.</summary>
+		public TrueTypeOutlineFormat outlineFormat;
+
+		/// <summary>True when the face has vector outlines (glyf, 'CFF ' or CFF2).</summary>
+		public bool HasOutlines => this.outlineFormat != TrueTypeOutlineFormat.None;
+
+		/// <summary>True when CBLC+CBDT (both required) or sbix is present — the acceptance condition for outline-less fonts.</summary>
+		public bool HasColorBitmapStrikeTables => (this.cblc != 0 && this.cbdt != 0) || this.sbix != 0;
+
+		/// <summary>Outline source of a loaded face.</summary>
+		public enum TrueTypeOutlineFormat : byte
+		{
+			/// <summary>No glyf/loca, 'CFF ' or CFF2 — accepted only with colour bitmap strike tables.</summary>
+			None = 0,
+			/// <summary>TrueType quadratic outlines (glyf + loca).</summary>
+			TrueTypeGlyf = 1,
+			/// <summary>'CFF ' Type 2 charstrings.</summary>
+			Cff = 2,
+			/// <summary>CFF2 charstrings (variable-capable).</summary>
+			Cff2 = 3,
+		}
 
 		public int stbtt__get_svg()
 		{
@@ -74,12 +103,32 @@ namespace StbTrueTypeSharp
 			this.mvar = (int)stbtt__find_table(ptr, (uint)fontstart, "MVAR");
 			this._variationTablesResolved = false;
 			this._variationTables = null;
+			// Vertical metrics (vhea/vmtx) — located here, read on demand (stbtt_GetFontVerticalMetrics / stbtt_GetGlyphVMetrics).
+			this.vhea = (int)stbtt__find_table(ptr, (uint)fontstart, "vhea");
+			this.vmtx = (int)stbtt__find_table(ptr, (uint)fontstart, "vmtx");
+			// Colour bitmap strike tables (plans/color_glyph_fonts.md §3.4). Located here so an OUTLINE-LESS colour
+			// font (Noto Color Emoji CBDT build: no glyf/loca/CFF) is a valid font; parsed by ColorBitmap/ on demand.
+			this.cblc = (int)stbtt__find_table(ptr, (uint)fontstart, "CBLC");
+			this.cbdt = (int)stbtt__find_table(ptr, (uint)fontstart, "CBDT");
+			this.sbix = (int)stbtt__find_table(ptr, (uint)fontstart, "sbix");
+			this.outlineFormat = TrueTypeOutlineFormat.None;
 			if (cmap == 0 || this.head == 0 || this.hhea == 0 || this.hmtx == 0)
 				return 0;
 			if (this.glyf != 0)
 			{
 				if (this.loca == 0)
 					return 0;
+				this.outlineFormat = TrueTypeOutlineFormat.TrueTypeGlyf;
+			}
+			else if (stbtt__find_table(ptr, (uint)fontstart, "CFF ") == 0
+			         && stbtt__find_table(ptr, (uint)fontstart, "CFF2") == 0)
+			{
+				// No outline table at all. Accept ONLY when a colour bitmap strike table can supply the glyphs
+				// (OpenType 1.9.1 CBLC/CBDT or sbix); otherwise this is not a renderable font.
+				if (!HasColorBitmapStrikeTables)
+					return 0;
+				this.loca = 0;                 // defensive: stbtt__GetGlyfOffset guards on glyf == 0 || loca == 0
+				return stbtt__InitFont_finish(ptr, cmap);
 			}
 			else
 			{
@@ -132,6 +181,7 @@ namespace StbTrueTypeSharp
 
 				b.stbtt__buf_seek((int)charstrings);
 				this.charstrings = b.stbtt__cff_get_index();
+				this.outlineFormat = TrueTypeOutlineFormat.Cff;
 			}
 
 			return stbtt__InitFont_finish(ptr, cmap);
@@ -195,6 +245,7 @@ namespace StbTrueTypeSharp
 			this.subrs = Buf.stbtt__get_subrs(this.cff.Clone(), this.fontdicts.stbtt__cff_index_get(0));
 			b.stbtt__buf_seek((int)charstringsOffset);
 			this.charstrings = b.stbtt__cff_get_index();
+			this.outlineFormat = TrueTypeOutlineFormat.Cff2;
 			this.cff2VariationStoreOffset = variationStoreOffset != 0 && variationStoreOffset + 2 < (uint)cff2Length
 				? (int)(cff2 + variationStoreOffset) : 0;
 			return true;
@@ -349,6 +400,11 @@ namespace StbTrueTypeSharp
 		{
 			var g1 = 0;
 			var g2 = 0;
+			// Outline-less fonts (colour bitmap strikes only — plans/color_glyph_fonts.md §3.4): no glyf/loca to
+			// index. Every TrueType outline entry point funnels through here, so this single guard makes them all
+			// report "empty glyph" instead of reading table offset 0.
+			if (this.glyf == 0 || this.loca == 0)
+				return -1;
 			if (glyph_index >= this.numGlyphs)
 				return -1;
 			if (this.indexToLocFormat >= 2)
@@ -1331,6 +1387,53 @@ namespace StbTrueTypeSharp
 				leftSideBearing = ttSHORT(this.data + this.hmtx + 4 * numOfLongHorMetrics +
 										  2 * (glyph_index - numOfLongHorMetrics));
 			}
+		}
+
+		/// <summary>
+		/// Vertical header metrics (OpenType 'vhea': ascent/descent/lineGap for vertical layout, font units).
+		/// Parsed at load, consumed by a future vertical-text plan (plans/color_glyph_fonts.md Q4).
+		/// Returns false (zeros) when the font has no 'vhea'.
+		/// </summary>
+		public bool stbtt_GetFontVerticalMetrics(out int vertAscent, out int vertDescent, out int vertLineGap)
+		{
+			vertAscent = 0;
+			vertDescent = 0;
+			vertLineGap = 0;
+			if (this.vhea == 0)
+				return false;
+			// vhea: Version16Dot16 @0, vertTypoAscender @4, vertTypoDescender @6, vertTypoLineGap @8.
+			vertAscent = ttSHORT(this.data + this.vhea + 4);
+			vertDescent = ttSHORT(this.data + this.vhea + 6);
+			vertLineGap = ttSHORT(this.data + this.vhea + 8);
+			return true;
+		}
+
+		/// <summary>
+		/// Per-glyph vertical metrics (OpenType 'vmtx': advanceHeight + topSideBearing, font units). Same
+		/// long/short metric split as hmtx, with numOfLongVerMetrics at vhea+34. Returns false (zeros) when
+		/// the font lacks 'vhea' or 'vmtx'.
+		/// </summary>
+		public bool stbtt_GetGlyphVMetrics(int glyph_index, out int advanceHeight, out int topSideBearing)
+		{
+			advanceHeight = 0;
+			topSideBearing = 0;
+			if (this.vhea == 0 || this.vmtx == 0)
+				return false;
+			int numOfLongVerMetrics = ttUSHORT(this.data + this.vhea + 34);
+			if (numOfLongVerMetrics == 0)
+				return false;
+			if (glyph_index < numOfLongVerMetrics)
+			{
+				advanceHeight = ttUSHORT(this.data + this.vmtx + 4 * glyph_index);
+				topSideBearing = ttSHORT(this.data + this.vmtx + 4 * glyph_index + 2);
+			}
+			else
+			{
+				advanceHeight = ttUSHORT(this.data + this.vmtx + 4 * (numOfLongVerMetrics - 1));
+				topSideBearing = ttSHORT(this.data + this.vmtx + 4 * numOfLongVerMetrics +
+				                         2 * (glyph_index - numOfLongVerMetrics));
+			}
+			return true;
 		}
 
 		public int stbtt_GetKerningTableLength()

@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\SafeStbTrueTypeSharp.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.12.0" />
+    <PackageReference Include="xunit" Version="2.9.2" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- Colour-font fixtures live in the parent repo's shared font home (plans/color_glyph_fonts.md §6.1.2).
+         NotoColorEmoji.ttf = CBDT/CBLC 3.0, one 109 ppem strike, NO glyf/loca/CFF (outline-less). OFL. -->
+    <None Include="..\..\..\tests\graphical\_TestFonts\NotoColorEmoji.ttf" Link="NotoColorEmoji.ttf" CopyToOutputDirectory="PreserveNewest" />
+    <!-- Outline-bearing control font for the negative assertions. -->
+    <None Include="..\..\..\tests\graphical\_TestFonts\Roboto-Regular.ttf" Link="Roboto-Regular.ttf" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>
