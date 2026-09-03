@@ -18,6 +18,8 @@ namespace StbTrueTypeSharp
 		public bool IsNull => _array == null;
 		/// <summary>Number of elements available from the current pointer offset.</summary>
 		public int RemainingLength => _array == null ? 0 : _array.Length - Offset;
+		/// <summary>The backing array (bounds-validated parsers read it directly with absolute offsets instead of through the throwing indexer).</summary>
+		internal T[] UnderlyingArray => _array;
 
 		public T this[int index]
 		{
