@@ -16,6 +16,8 @@
     <!-- Source variable fonts + fontTools-instanced static twins; provenance and per-position rationale in Fonts/FIXTURES.md.
          The generator (generate_instanced_fixtures.py) is checked in for the record but is NEVER run by the build. -->
     <None Update="Fonts\*.ttf" CopyToOutputDirectory="PreserveNewest" />
+    <!-- Part B: the CFF2 source VF (AdobeVFPrototype.otf); its instanced twins are 'CFF ' fonts carrying the .ttf suffix. -->
+    <None Update="Fonts\*.otf" CopyToOutputDirectory="PreserveNewest" />
     <None Update="Fonts\FIXTURES.md" CopyToOutputDirectory="Never" />
     <None Update="Fonts\generate_instanced_fixtures.py" CopyToOutputDirectory="Never" />
   </ItemGroup>

@@ -73,6 +73,39 @@ FIXTURE_PLAN = [
             {"wght": 700, "wdth": 75, "opsz": 36, "slnt": -5},  # multi-axis: tuple scalars multiply across axes
         ],
     ),
+    # ── Part B (CFF2): Adobe Variable Font Prototype, wght 200..389.34..900, CNTR 0..0..100 (OFL 1.1) ──
+    # The .otf is CFF2 (blend/vsindex charstrings, one FD, one ItemVariationData over 5 regions, HVAR for
+    # advances since CFF2 has no phantom points). fontTools instances a fully-pinned CFF2 into a plain
+    # 'CFF ' (OTTO) font -- the fixture keeps the .ttf suffix of this generator but is CFF-flavoured
+    # (our loader sniffs by content). The .ttf is the SAME design built as glyf+gvar: a second, independent
+    # oracle -- the CFF2 outline at P must agree with the glyf outline at P within cubic<->quadratic
+    # authoring tolerance (compared as rasterized masks/bboxes, not point lists).
+    (
+        "AdobeVFPrototype.otf",
+        "AdobeVFPrototype.cff2",
+        [
+            {},                              # default instance (wght 389.34, CNTR 0): blend with all-zero scalars == static reader
+            {"wght": 200},                   # axis min
+            {"wght": 900},                   # axis max
+            {"wght": 600},                   # intermediate weight
+            {"CNTR": 100},                   # second axis at its max (default wght)
+            {"wght": 900, "CNTR": 50},       # named instance; two axes at once
+            {"wght": 900, "CNTR": 100},      # named instance
+        ],
+    ),
+    (
+        "AdobeVFPrototype.ttf",
+        "AdobeVFPrototype.glyf",
+        [
+            {},
+            {"wght": 200},
+            {"wght": 900},
+            {"wght": 600},
+            {"CNTR": 100},
+            {"wght": 900, "CNTR": 50},
+            {"wght": 900, "CNTR": 100},
+        ],
+    ),
 ]
 
 

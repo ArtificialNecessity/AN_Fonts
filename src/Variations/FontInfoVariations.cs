@@ -122,7 +122,19 @@ namespace StbTrueTypeSharp
 			// it only means kerning stays at the default instance. Failure is still recorded for diagnostics.
 			OpenTypeItemVariationStore gdefStore = stbtt__TryParseGdefItemVariationStore(fvarTable.AxisCount);
 
-			_variationTables = new OpenTypeVariationTables(fvarTable, avarTable, gvarTable, hvarTable, mvarTable, gdefStore);
+			// CFF2 VariationStore (Part B, README §8.2): uint16 length then an ItemVariationStore whose regionIndexes
+			// drive the charstring 'blend' operator. A malformed store is FATAL for outline variation of a CFF2 font
+			// (every blend would misread), so — unlike GDEF — it rejects the variation tables (font renders static).
+			OpenTypeItemVariationStore cff2Store = null;
+			if (this.isCff2 && this.cff2VariationStoreOffset != 0)
+			{
+				int storeLength = ttUSHORT(this.data + this.cff2VariationStoreOffset);
+				if (!OpenTypeItemVariationStore.TryParse(this.data, this.cff2VariationStoreOffset + 2, storeLength, fvarTable.AxisCount, "CFF2",
+						out cff2Store, out _variationParseFailure))
+					return null;
+			}
+
+			_variationTables = new OpenTypeVariationTables(fvarTable, avarTable, gvarTable, hvarTable, mvarTable, gdefStore, cff2Store);
 			return _variationTables;
 		}
 
@@ -165,10 +177,14 @@ namespace StbTrueTypeSharp
 
 		/// <summary>", "
 		/// stbtt_GetGlyphShape at a normalized variation instance. Default coords, static fonts, fonts without gvar,
-		/// and CFF outlines (CFF2 blend = Part B) all route to the UN-VARIED path byte-for-byte (the no-op proof).
+		/// and 'CFF ' outlines route to the UN-VARIED path byte-for-byte (the no-op proof). CFF2 (Part B, README §8)
+		/// routes to the charstring interpreter with coords: 'blend' scales its deltas by the instance's region
+		/// scalars (all zero at the default instance ⇒ identical to the static reader).
 		/// </summary>
 		public int stbtt_GetGlyphShapeVar(int glyph_index, in FontVariationNormalizedCoordinates coords, out stbtt_vertex[] pvertices)
 		{
+			if (this.isCff2)
+				return stbtt__GetGlyphShapeT2(glyph_index, coords, out pvertices);
 			if (coords.IsDefault || this.cff.size != 0 || stbtt__GetVariationTables()?.Gvar == null)
 				return stbtt_GetGlyphShape(glyph_index, out pvertices);
 			return stbtt__GetGlyphShapeTT(glyph_index, coords, out pvertices);
@@ -297,8 +313,21 @@ namespace StbTrueTypeSharp
 		{
 			stbtt_GetGlyphHMetrics(glyph_index, ref advanceWidth, ref leftSideBearing);
 			var tables = stbtt__GetVariationTables();
-			if (coords.IsDefault || tables == null || this.cff.size != 0)
+			if (coords.IsDefault || tables == null)
 				return;
+			if (this.cff.size != 0)
+			{
+				// CFF2 (Part B, README §8.2): no phantom points, so the advance varies ONLY through HVAR (mandatory in
+				// practice; without it the advance stays at the default instance). lsb = the varied outline's xMin
+				// (what an instanced hmtx records). 'CFF ' fonts have no variation data at all: unchanged.
+				if (!this.isCff2 || tables.Hvar == null)
+					return;
+				int cff2Advance = advanceWidth + FontVariationNormalization.OtRound(tables.Hvar.ComputeAdvanceWidthDelta(glyph_index, coords));
+				advanceWidth = cff2Advance < 0 ? 0 : cff2Advance;
+				if (stbtt_GetGlyphBoxVar(glyph_index, coords, out int cff2X0, out _, out _, out _))
+					leftSideBearing = cff2X0;
+				return;
+			}
 			int defaultAdvance = advanceWidth;
 			int defaultLsb = leftSideBearing;
 			// Phantom deltas (need them for lsb always, and for advance when there is no HVAR).
@@ -557,9 +586,14 @@ namespace StbTrueTypeSharp
 			/// (recorded in stbtt_VariationParseFailure; kerning then stays at the default instance — fail-soft).
 			/// </summary>
 			public OpenTypeItemVariationStore GdefItemVariationStore { get; }
+			/// <summary>
+			/// CFF2 VariationStore (README §8.2): region lists for the charstring 'blend' operator (Part B). Null for
+			/// glyf fonts and for a CFF2 font without variations.
+			/// </summary>
+			public OpenTypeItemVariationStore Cff2VariationStore { get; }
 
 			internal OpenTypeVariationTables(OpenTypeFvarTable fvar, OpenTypeAvarTable avar, OpenTypeGvarTable gvar, OpenTypeHvarTable hvar, OpenTypeMvarTable mvar,
-				OpenTypeItemVariationStore gdefItemVariationStore)
+				OpenTypeItemVariationStore gdefItemVariationStore, OpenTypeItemVariationStore cff2VariationStore)
 			{
 				Fvar = fvar;
 				Avar = avar;
@@ -567,6 +601,7 @@ namespace StbTrueTypeSharp
 				Hvar = hvar;
 				Mvar = mvar;
 				GdefItemVariationStore = gdefItemVariationStore;
+				Cff2VariationStore = cff2VariationStore;
 			}
 		}
 
