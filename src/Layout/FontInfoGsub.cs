@@ -20,6 +20,11 @@ namespace StbTrueTypeSharp
 		private bool _gsubResolved;
 		private FontVariationParseFailure _gsubParseFailure = FontVariationParseFailure.None;
 
+		// GDEF glyph classification for LookupFlag skipping (M2, plans/color_glyph_fonts.md §5.2). The GDEF
+		// ItemVariationStore is parsed separately in FontInfoVariations; this covers the classification subtables.
+		private OpenTypeGdefTable _gdefTable;
+		private bool _gdefResolved;
+
 		// Last-coords memo: Fontstash resolves one instance per text run, so consecutive calls repeat the same coords.
 		private FontVariationNormalizedCoordinates _gsubMemoCoords;
 		private GsubResolvedLookupSet _gsubMemoLookups;
@@ -63,6 +68,22 @@ namespace StbTrueTypeSharp
 		internal OpenTypeGsubTable stbtt__GetGsubTable()
 		{
 			if (_gsubResolved) return _gsubTable;
+			return stbtt__ResolveGsubTable();
+		}
+
+		/// <summary>GDEF classification tables (GlyphClassDef/MarkAttachClassDef/MarkGlyphSetsDef) for LookupFlag
+		/// skipping; null when GDEF is absent or malformed (skipping degrades to the no-skip fast path).</summary>
+		internal OpenTypeGdefTable stbtt__GetGdefTable()
+		{
+			if (_gdefResolved) return _gdefTable;
+			_gdefResolved = true;
+			if (this.gdef == 0 || !OpenTypeGdefTable.TryParse(this.data, this.gdef, stbtt__find_table_length("GDEF"), out _gdefTable))
+				_gdefTable = null;
+			return _gdefTable;
+		}
+
+		private OpenTypeGsubTable stbtt__ResolveGsubTable()
+		{
 			_gsubResolved = true;
 			_gsubTable = null;
 			if (this.gsub == 0) return null;
@@ -90,15 +111,38 @@ namespace StbTrueTypeSharp
 		/// cmap glyph -> glyph after 'rvrn' (+ required feature) at this instance. Identity when nothing applies. NOTE the
 		/// default instance is NOT a no-op for a font whose FeatureVariations has a record matching coordinate 0 (WPT
 		/// FontStyleTest: f, r -> .mono at slnt 0) — the no-op guarantee is for OUTLINES/METRICS, not for glyph selection.
-		/// Glyph 0 (.notdef) is never substituted.
+		/// Glyph 0 (.notdef) is never substituted. M2: routed through the ONE GSUB buffer applier (buffer of length 1)
+		/// — byte-identical to the former per-glyph SingleSubst path for 'rvrn' fonts (VariableFontTest golds prove it).
 		/// </summary>
 		public int stbtt_SubstituteGlyphVar(int glyph_index, in FontVariationNormalizedCoordinates coords)
 		{
 			if (glyph_index <= 0) return glyph_index;
 			var lookups = stbtt_ResolveRequiredVariationLookups(coords);
 			if (lookups.IsEmpty) return glyph_index;
-			int substituted = _gsubTable.ApplySingleSubstitutionLookups(lookups, glyph_index);
+			var applier = stbtt__GetGsubApplier();
+			if (applier == null) return glyph_index;
+			var buffer = _gsubSingleGlyphBuffer ?? (_gsubSingleGlyphBuffer = new GsubGlyphBuffer());
+			buffer.Reset();
+			buffer.Append((ushort)glyph_index, 0, 1);
+			applier.Apply(lookups, buffer);
+			// 'rvrn' is 1:1 glyph selection; a lookup that changed the buffer length on a single glyph is not a
+			// variation alternate — keep the identity rather than guess.
+			int substituted = buffer.Length == 1 ? buffer.GlyphIds[0] : glyph_index;
 			return substituted > 0 && substituted < this.numGlyphs ? substituted : glyph_index; // never produce .notdef or an out-of-range id from a real glyph
+		}
+
+		private GsubLookupApplier _gsubApplier;
+		private GsubGlyphBuffer _gsubSingleGlyphBuffer;
+
+		/// <summary>The one GSUB buffer applier for this face (plans/color_glyph_fonts.md §5.1); null when GSUB is
+		/// absent or malformed. Lazy; NOT thread-safe (same discipline as the rest of FontInfo).</summary>
+		public GsubLookupApplier stbtt__GetGsubApplier()
+		{
+			if (_gsubApplier != null) return _gsubApplier;
+			var table = stbtt__GetGsubTable();
+			if (table == null) return null;
+			_gsubApplier = new GsubLookupApplier(table, stbtt__GetGdefTable());
+			return _gsubApplier;
 		}
 
 		/// <summary>stbtt_FindGlyphIndex then stbtt_SubstituteGlyphVar. 0 (no cmap entry) stays 0.</summary>
