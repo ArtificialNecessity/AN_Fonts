@@ -222,7 +222,9 @@ def main():
                 sys.exit(f"{source_file}: unknown axis tags {unknown}")
             full_location = dict(axis_defaults)
             full_location.update(location)
-            font = TTFont(source_path)
+            # recalcTimestamp=False: keep head.modified from the SOURCE so re-running the generator yields
+            # byte-identical twins (2026-09-04: a regenerate re-committed 40 unchanged twins differing only in head.modified).
+            font = TTFont(source_path, recalcTimestamp=False)
             # updateFontNames=False: keep name/STAT untouched -- we compare outlines and
             # metrics only, and name rewriting needs STAT axis-value names that subsets lack.
             instancer.instantiateVariableFont(font, full_location, inplace=True, updateFontNames=False)
