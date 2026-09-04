@@ -10,6 +10,13 @@
   <ItemGroup>
     <!-- TEST-ONLY oracle dependency; src/ must never reference HarfBuzz -->
     <PackageReference Include="HarfBuzzSharp" Version="8.3.1.1" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- M2 GSUB sequence oracle fixtures (plans/color_glyph_fonts.md §5.5): BOTH Noto emoji builds. OFL. -->
+    <None Include="..\..\..\tests\graphical\_TestFonts\NotoColorEmoji.ttf" Link="NotoColorEmoji.ttf" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\..\tests\graphical\_TestFonts\NotoColorEmoji-Regular.ttf" Link="NotoColorEmoji-Regular.ttf" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+  <ItemGroup>
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.12.0" />
     <PackageReference Include="xunit" Version="2.9.2" />
     <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />

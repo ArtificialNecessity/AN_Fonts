@@ -197,6 +197,72 @@ namespace StbTrueTypeSharp.Layout
 
 		private void MarkFeatureLookups(int featureIndex, OpenTypeLayoutFeatureVariationRecord appliedRecord, bool[] marked, ref int unsupported)
 		{
+			MarkFeatureLookupsCore(featureIndex, appliedRecord, marked, ref unsupported, countNonSingleSubst: true);
+		}
+
+		/// <summary>
+		/// M2 (plans/color_glyph_fonts.md §5.1): lookups of the default LangSys features whose tag is in
+		/// <paramref name="featureTags"/>, PLUS the required feature, PLUS 'rvrn' when present in the tag set —
+		/// FeatureVariations alternates applied, union ascending = LookupList application order. Unlike
+		/// <see cref="ResolveRequiredVariationLookups"/>, UnsupportedLookupCount here counts lookups the BUFFER
+		/// applier cannot run: type 8 (ReverseChainSingle) and unknown types (spec §5.1 table — types 1-7 supported).
+		/// </summary>
+		public GsubResolvedLookupSet ResolveLookupsForFeatures(ReadOnlySpan<OpenTypeFeatureTag> featureTags, in FontVariationNormalizedCoordinates coords)
+		{
+			if (_defaultLangSys.IsNull) return GsubResolvedLookupSet.Empty;
+			int appliedRecord = FeatureVariations == null ? -1 : FeatureVariations.FindApplicableRecordIndex(coords);
+			var record = appliedRecord >= 0 ? FeatureVariations.Records[appliedRecord] : null;
+
+			var marked = new bool[_lookupCount];
+			int unsupported = 0;
+			int required = OpenTypeLayoutScriptSelection.GetRequiredFeatureIndex(_defaultLangSys);
+			if (required >= 0 && required < _featureCount)
+				MarkFeatureLookupsCore(required, record, marked, ref unsupported, countNonSingleSubst: false);
+			int featureIndexCount = OpenTypeLayoutScriptSelection.GetFeatureIndexCount(_defaultLangSys);
+			for (int i = 0; i < featureIndexCount; i++)
+			{
+				int featureIndex = OpenTypeLayoutScriptSelection.GetFeatureIndex(_defaultLangSys, i);
+				if (featureIndex >= _featureCount || featureIndex == required) continue;
+				uint tag = GetFeatureTag(featureIndex);
+				bool selected = false;
+				for (int t = 0; t < featureTags.Length && !selected; t++)
+					if (featureTags[t].Value == tag) selected = true;
+				if (!selected) continue;
+				MarkFeatureLookupsCore(featureIndex, record, marked, ref unsupported, countNonSingleSubst: false);
+			}
+
+			int count = 0;
+			for (int i = 0; i < marked.Length; i++) if (marked[i]) count++;
+			if (count == 0) return GsubResolvedLookupSet.Empty;
+			var indices = new ushort[count];
+			for (int i = 0, w = 0; i < marked.Length; i++) if (marked[i]) indices[w++] = (ushort)i;
+			return new GsubResolvedLookupSet(indices, unsupported, appliedRecord);
+		}
+
+		private uint GetFeatureTag(int featureIndex)
+		{
+			var rec = _fontData + _tableOffset + _featureListOffset + 2 + 6 * featureIndex;
+			return ((uint)rec[0] << 24) | ((uint)rec[1] << 16) | ((uint)rec[2] << 8) | rec[3];
+		}
+
+		/// <summary>Type 1-7 the buffer applier runs; type 8 / unknown counted as unsupported (never applied).</summary>
+		public bool IsBufferSupportedLookup(int lookupIndex)
+		{
+			var lookup = GetLookupTable(lookupIndex, out int avail);
+			if (avail < 6) return false;
+			int lookupType = ttUSHORT(lookup);
+			if (lookupType >= 1 && lookupType <= 6) return true;
+			if (lookupType != LookupTypeExtensionSubstitution) return false;
+			int subTableCount = ttUSHORT(lookup + 4);
+			if (subTableCount == 0 || 6 + subTableCount * 2 > avail) return false;
+			var ext = lookup + ttUSHORT(lookup + 6);
+			if (ext.RemainingLength < 8 || ttUSHORT(ext) != 1) return false;
+			int inner = ttUSHORT(ext + 2);
+			return inner >= 1 && inner <= 6;
+		}
+
+		private void MarkFeatureLookupsCore(int featureIndex, OpenTypeLayoutFeatureVariationRecord appliedRecord, bool[] marked, ref int unsupported, bool countNonSingleSubst)
+		{
 			FakePtr<byte> featureTable;
 			int alternateAbsolute = appliedRecord == null ? -1 : appliedRecord.GetAlternateFeatureTableAbsoluteOffset(featureIndex);
 			if (alternateAbsolute >= 0)
@@ -214,11 +280,12 @@ namespace StbTrueTypeSharp.Layout
 				int lookupIndex = ttUSHORT(featureTable + 4 + 2 * li);
 				if (lookupIndex >= _lookupCount || marked[lookupIndex]) continue;
 				marked[lookupIndex] = true;
-				if (!IsSingleSubstitutionLookup(lookupIndex)) unsupported++;
+				if (countNonSingleSubst ? !IsSingleSubstitutionLookup(lookupIndex) : !IsBufferSupportedLookup(lookupIndex))
+					unsupported++;
 			}
 		}
 
-		private FakePtr<byte> GetLookupTable(int lookupIndex, out int bytesAvailable)
+		internal FakePtr<byte> GetLookupTable(int lookupIndex, out int bytesAvailable)
 		{
 			var lookupList = _fontData + _tableOffset + _lookupListOffset;
 			int lookupOffset = ttUSHORT(lookupList + 2 + 2 * lookupIndex);
