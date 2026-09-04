@@ -688,8 +688,6 @@ namespace StbTrueTypeSharp
 					mtx[3] = 1;
 					mtx[4] = 0;
 					mtx[5] = 0;
-					float m = 0;
-					float n = 0;
 					flags = (ushort)ttSHORT(comp);
 					comp += 2;
 					gidx = (ushort)ttSHORT(comp);
@@ -738,8 +736,21 @@ namespace StbTrueTypeSharp
 						comp += 2;
 					}
 
-					m = (float)Math.Sqrt(mtx[0] * mtx[0] + mtx[1] * mtx[1]);
-					n = (float)Math.Sqrt(mtx[2] * mtx[2] + mtx[3] * mtx[3]);
+					// COMPOSITE TRANSFORM (OpenType glyf spec "Composite Glyph Description"; FreeType TT_Process_Composite_Component;
+					// fontTools GlyphComponent):   x' = a*x + c*y + dx,   y' = b*x + d*y + dy   with (a b c d) = mtx[0..3].
+					// The offset (dx, dy) is UNSCALED unless SCALED_COMPONENT_OFFSET (bit 11) is set — then dx scales by
+					// |(a, b)| and dy by |(c, d)| (Apple semantics; FreeType's default when neither bit 11 nor UNSCALED bit 12 is set
+					// is unscaled). Upstream stb_truetype computes m = |(a, b)|, n = |(c, d)| and then multiplies the WHOLE
+					// transformed point by m / n — i.e. a scaled component is scaled twice (WE_HAVE_A_SCALE 1.5 → ×2.25) and the
+					// offset is always scaled. FOUND 2026-09-03 by Fraunces 'bullet' (period @ scale 1.5): stb xMin 202 vs the font's
+					// own header/fontTools/FreeType 135. Fixed here; the only oracle that could see it was the fontTools-instanced
+					// hmtx (VariationMetricsTests lsb) — VF-vs-twin outline identity passes either way because both sides run this code.
+					float offsetScaleX = 1f, offsetScaleY = 1f;
+					if ((flags & (1 << 11)) != 0)
+					{
+						offsetScaleX = (float)Math.Sqrt(mtx[0] * mtx[0] + mtx[1] * mtx[1]);
+						offsetScaleY = (float)Math.Sqrt(mtx[2] * mtx[2] + mtx[3] * mtx[3]);
+					}
 					// VARIATION (gvar composite rule): component offset deltas apply only to ARGS_ARE_XY_VALUES
 					// components (flag bit 1); the delta-adjusted offset is what the component scale sees. Component
 					// scale/2x2 is never varied. The component itself is fetched at the SAME instance.
@@ -748,24 +759,28 @@ namespace StbTrueTypeSharp
 						mtx[4] = (float)Variations.FontVariationNormalization.OtRound(mtx[4] + componentOffsetDeltaX[componentIndex]);
 						mtx[5] = (float)Variations.FontVariationNormalization.OtRound(mtx[5] + componentOffsetDeltaY[componentIndex]);
 					}
+					float dx = mtx[4] * offsetScaleX;
+					float dy = mtx[5] * offsetScaleY;
 					componentIndex++;
 					comp_num_verts = coords.IsDefault
 						? stbtt_GetGlyphShape(gidx, out comp_verts)
 						: stbtt_GetGlyphShapeVar(gidx, coords, out comp_verts);
 					if (comp_num_verts > 0)
 					{
+						// Round (not truncate) the transformed coordinates: fontTools GlyphCoordinates.toInt / FreeType FT_MulFix
+						// both round; truncation toward zero would bias every scaled component by up to 1 unit toward the origin.
 						for (i = 0; i < comp_num_verts; ++i)
 						{
 							short x = 0;
 							short y = 0;
 							x = comp_verts[i].x;
 							y = comp_verts[i].y;
-							comp_verts[i].x = (short)(m * (mtx[0] * x + mtx[2] * y + mtx[4]));
-							comp_verts[i].y = (short)(n * (mtx[1] * x + mtx[3] * y + mtx[5]));
+							comp_verts[i].x = (short)Math.Round(mtx[0] * x + mtx[2] * y + dx, MidpointRounding.AwayFromZero);
+							comp_verts[i].y = (short)Math.Round(mtx[1] * x + mtx[3] * y + dy, MidpointRounding.AwayFromZero);
 							x = comp_verts[i].cx;
 							y = comp_verts[i].cy;
-							comp_verts[i].cx = (short)(m * (mtx[0] * x + mtx[2] * y + mtx[4]));
-							comp_verts[i].cy = (short)(n * (mtx[1] * x + mtx[3] * y + mtx[5]));
+							comp_verts[i].cx = (short)Math.Round(mtx[0] * x + mtx[2] * y + dx, MidpointRounding.AwayFromZero);
+							comp_verts[i].cy = (short)Math.Round(mtx[1] * x + mtx[3] * y + dy, MidpointRounding.AwayFromZero);
 						}
 
 						tmp = new stbtt_vertex[num_vertices + comp_num_verts];

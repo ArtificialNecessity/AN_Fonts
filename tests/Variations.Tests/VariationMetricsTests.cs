@@ -83,6 +83,25 @@ namespace Variations.Tests
 			// Inter '.notdef' HVAR regions are all wght-peaked: the disagreement exists only when wght is off default.
 			bool isInterWeightOffDefault = instancedFileName.StartsWith("Inter.", StringComparison.Ordinal) && coords.GetF2Dot14(0) != 0;
 			var expectedInconsistent = isInterWeightOffDefault ? new List<int> { 0 } : new List<int>();
+			// Fraunces (2026-09-03): 'gcircumflex' (539) and 'gmacron' (544) — composites whose gvar carries NO phantom
+			// advance delta while HVAR does (−117.6 at wght 400; fontTools' phantom-derived twin hmtx stays at the default
+			// 1225). Same self-inconsistency class as Inter '.notdef'; production (HVAR wins) matches Chrome/FreeType.
+			// The set is derived, not hard-coded per position: a glyph is expected to disagree exactly when its HVAR
+			// delta rounds to non-zero at these coords, so any THIRD glyph appearing is still a failure.
+			if (instancedFileName.StartsWith("Fraunces.", StringComparison.Ordinal))
+			{
+				var hvar = variableFont.stbtt__GetVariationTables()?.Hvar;
+				Assert.NotNull(hvar);
+				foreach (int knownSelfInconsistentGlyph in new[] { 539, 544 })
+				{
+					int phantomAdvance = 0;
+					variableFont.stbtt__TryGetPhantomDerivedAdvanceVar(knownSelfInconsistentGlyph, coords, out phantomAdvance);
+					int defaultAdvance = 0, defaultLsb = 0;
+					variableFont.stbtt_GetGlyphHMetrics(knownSelfInconsistentGlyph, ref defaultAdvance, ref defaultLsb);
+					if (defaultAdvance + FontVariationNormalization.OtRound(hvar.ComputeAdvanceWidthDelta(knownSelfInconsistentGlyph, coords)) != phantomAdvance)
+						expectedInconsistent.Add(knownSelfInconsistentGlyph);
+				}
+			}
 			Assert.Equal(expectedInconsistent, selfInconsistentGlyphs);
 		}
 
@@ -94,6 +113,12 @@ namespace Variations.Tests
 			// CFF2 (Part B): fontTools leaves hmtx lsb at the DEFAULT instance (no phantom points, HVAR has no LsbMap —
 			// checked 2026-09-02: twin hmtx lsb == VF default lsb while the twin's own outline starts elsewhere), so the
 			// twin's hmtx is STALE and the oracle is the twin's outline bbox xMin — which is what our lsb computes.
+			// CFF2 at the DEFAULT instance (added 2026-09-03, Source Serif 4 / Source Sans 3 VF): our lsb is the hmtx value
+			// verbatim (the no-op path) and the twin's hmtx is NOT stale there; stbtt_GetGlyphBox on a CFF font is a
+			// CONTROL-POINT bbox that can undershoot a cubic's true extremum (Source Sans 'uni002E002D0029': exact xMin
+			// 29.92 vs control 28), so the bbox is the wrong oracle at default — compare hmtx there. (Consequence for
+			// production: the varied CFF2 lsb IS control-bbox-derived and may sit a few units left of the true ink edge;
+			// glyph placement uses the bitmap box, not lsb, so pixels are unaffected.)
 			FontInfo variableFont = VariationFixtureCatalog.LoadFont(VariationFixtureCatalog.SourceVariableFontFileFor(instancedFileName));
 			FontInfo instancedTwin = VariationFixtureCatalog.LoadFont(instancedFileName);
 			var coords = variableFont.stbtt_NormalizeVariationRequest(VariationFixtureCatalog.DesignPositionOf(instancedFileName));
@@ -102,7 +127,7 @@ namespace Variations.Tests
 			{
 				int oursAdvance = 0, oursLsb = 0, twinAdvance = 0, twinLsb = 0;
 				variableFont.stbtt_GetGlyphHMetricsVar(glyph, coords, ref oursAdvance, ref oursLsb);
-				if (variableFont.isCff2)
+				if (variableFont.isCff2 && !coords.IsDefault)
 				{
 					int bx0 = 0, by0 = 0, bx1 = 0, by1 = 0;
 					if (instancedTwin.stbtt_GetGlyphBox(glyph, ref bx0, ref by0, ref bx1, ref by1) == 0)

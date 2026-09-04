@@ -30,6 +30,15 @@ namespace Variations.Tests
 			// WPT's .woff2 decompressed. Twins carry the design-position-resolved `rvrn` lookups baked in by fontTools —
 			// their GSUB is the substitution oracle (RequiredVariationAlternatesTests), their glyf the outline oracle.
 			{ "FontStyleTest-slnt-VF", "FontStyleTest-slnt-VF.ttf" },
+			// V8 coverage pass (Silky spec §10). Fraunces: avar-heavy (opsz 10 segments), wght default == MAX (negative-only
+			// normalization branch), 424 composites with varying component offsets, GSUB rvrn firing at the DEFAULT instance.
+			{ "Fraunces", "Fraunces-VariableFont_SOFT,WONK,opsz,wght.ttf" },
+			// Source Serif 4 Variable: CFF2 with SIX FontDicts + FDSelect (.otf) and the same design as glyf+gvar (.ttf) —
+			// the second Cff2GlyfCrossOracle pair. Fixtures of the .otf are plain 'CFF ' fonts (fontTools fully pinned).
+			{ "SourceSerif4.cff2", "SourceSerif4Variable-Roman.otf" },
+			{ "SourceSerif4.glyf", "SourceSerif4Variable-Roman.ttf" },
+			// Source Sans 3 VF: CFF2 whose charstrings EXECUTE `vsindex` (672 of them; VarStore with two VarData subtables).
+			{ "SourceSans3VF.cff2", "SourceSans3VF-Upright.otf" },
 		};
 
 		/// <summary>xunit MemberData: every *.instanced.*.ttf in Fonts/.</summary>
