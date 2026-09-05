@@ -115,8 +115,152 @@ public class GsubSequenceOracleTests
         }
     }
 
+    // ── Real-font GSUB format coverage (probe: Scripts/probe_gsub_inventory.py, 2026-09-04) ──
+    // Gentium Plus exercises type 3 (cv##), 5 fmt 2+3, 6 fmt 3, UseMarkFilteringSet + MarkAttachType (via ccmp);
+    // 0xProto exercises TEXTURE HEALING = calt type 6 fmt 1 (x62) + fmt 3 (x51) -> nested type 1, plus
+    // UseMarkFilteringSet. Feature set mirrors the ENGINE's ShapingFeatureTags: ccmp liga rlig clig calt.
+
+    private static readonly Feature[] RealFontHbFeatures =
+    {
+        new Feature(new Tag('c', 'c', 'm', 'p'), 1),
+        new Feature(new Tag('l', 'i', 'g', 'a'), 1),
+        new Feature(new Tag('r', 'l', 'i', 'g'), 1),
+        new Feature(new Tag('c', 'l', 'i', 'g'), 1),
+        new Feature(new Tag('c', 'a', 'l', 't'), 1),
+        new Feature(new Tag('c', 'u', 'r', 's'), 0),
+        new Feature(new Tag('d', 'i', 's', 't'), 0),
+        new Feature(new Tag('k', 'e', 'r', 'n'), 0),
+        new Feature(new Tag('l', 'o', 'c', 'l'), 0), // language-neutral: our engine has no language selection yet
+        new Feature(new Tag('m', 'a', 'r', 'k'), 0),
+        new Feature(new Tag('m', 'k', 'm', 'k'), 0),
+    };
+
+    private static readonly OpenTypeFeatureTag[] RealFontStbFeatures =
+    {
+        OpenTypeFeatureTag.Ccmp, OpenTypeFeatureTag.Liga, OpenTypeFeatureTag.Rlig, OpenTypeFeatureTag.Clig,
+        OpenTypeFeatureTag.Calt,
+    };
+
+    public static IEnumerable<object[]> RealFontCorpus()
+    {
+        // Gentium Plus: liga (ffi/ffl), ccmp composition/decomposition around combining marks. Inputs are
+        // either NFC-precomposed or use mark combinations with NO precomposed form, so HarfBuzz's Unicode
+        // normalization pre-pass (which we do not implement) is a no-op and the comparison isolates GSUB.
+        var gentium = new[]
+        {
+            "office ffi ffl fi fl",                    // liga ligatures
+            "na\u00EFve \u00E9l\u00E8ve \u00F1and\u00FA",  // NFC precomposed diacritics
+            "Vi\u1EC7t Nam \u1EAD\u1EAB\u1EE3\u1EEF",  // Vietnamese NFC (stacked diacritics, precomposed)
+            "q\u0303 m\u0301 x\u0331 s\u0329",         // combining marks with NO precomposed form (normalization no-op)
+            "\u01B4\u0301 \u0257\u0308 \u025B\u0301",  // African Latin: hooked/open letters + marks (Gentium's home turf)
+            "a\u0301\u0316 e\u0300\u0323",             // multiple marks per base (above + below)
+        };
+        // 0xProto: texture healing (narrow/wide contextual variants) + programming ligature contexts.
+        var proto = new[]
+        {
+            "mmm", "im", "mi", "wim", "iwi",           // healing pairs: wide glyphs flanked by narrow
+            "million", "immutable", "communism",       // healing inside words
+            "lIl1 0O ::= ...",                          // narrow columns + new 2.5 ligatures
+            "=> -> != === |> <$>",                     // programming ligatures (calt/liga contexts)
+            "// comment /* block */",
+        };
+        foreach (string s in gentium) yield return new object[] { "GentiumPlus-Regular.ttf", s };
+        foreach (string s in proto) yield return new object[] { "0xProto-Regular.ttf", s };
+    }
+
+    // ── Synthetic fixture: SequenceContext FORMAT 1 (the one encoding no real corpus font carries;
+    //    built by Scripts/build_gsub_type5fmt1_fixture.py — ccmp: [A B C] → nested single A→A.alt) ──
+
+    [Theory]
+    [InlineData("ABC", true)]   // rule matches → A→A.alt (glyph 5), B C untouched
+    [InlineData("ABD", false)]  // input sequence mismatch → untouched
+    [InlineData("BCA", false)]  // coverage glyph not at rule start → untouched
+    [InlineData("AABC", true)]  // second A starts the match; first A untouched
+    public void Type5Format1_Fixture_AppliesNestedRecordExactly(string text, bool expectSubstitution)
+    {
+        var (stb, hbFont) = LoadBoth(Path.Combine("Fixtures", "GsubType5Fmt1Fixture.ttf"));
+        using (hbFont)
+        {
+            // HarfBuzz oracle first: glyph ids AND clusters exact.
+            var codepoints = new List<int>();
+            foreach (System.Text.Rune rune in text.EnumerateRunes()) codepoints.Add(rune.Value);
+            var failure = CompareSequence(stb, hbFont, codepoints.ToArray(), RealFontStbFeatures, RealFontHbFeatures);
+            Assert.True(failure == null, $"type5/fmt1 fixture / \"{text}\": {failure}");
+
+            // Direct law: A.alt is glyph 5 (fixture glyph order), and it appears iff the rule matched.
+            var buffer = new GsubGlyphBuffer();
+            for (int i = 0; i < codepoints.Count; i++)
+                buffer.Append((ushort)stb.stbtt_FindGlyphIndex(codepoints[i]), i, 1, false);
+            var applier = stb.stbtt__GetGsubApplier()!;
+            applier.Apply(applier.ResolveLookups(RealFontStbFeatures, FontVariationNormalizedCoordinates.Default), buffer);
+            bool sawAlternate = false;
+            for (int i = 0; i < buffer.Length; i++) sawAlternate |= buffer.GlyphIds[i] == 5;
+            Assert.Equal(expectSubstitution, sawAlternate);
+            Assert.Equal(codepoints.Count, buffer.Length); // context+single never changes length
+        }
+    }
+
+    [Theory]
+    [MemberData(nameof(RealFontCorpus))]
+    public void RealFontShaping_MatchesHarfBuzz(string fontFile, string text)
+    {
+        var (stb, hbFont) = LoadBoth(fontFile);
+        using (hbFont)
+        {
+            // The engine's contract is NFC input (no normalization pass — plans/color_glyph_fonts.md §5.1);
+            // normalize here so corpus rows compare the GSUB pipelines, not Unicode normalization. (Rows with
+            // combining marks that have no precomposed form survive NFC unchanged — that is the point of them.)
+            text = text.Normalize(System.Text.NormalizationForm.FormC);
+            var codepoints = new List<int>();
+            foreach (System.Text.Rune rune in text.EnumerateRunes()) codepoints.Add(rune.Value);
+            var failure = CompareSequence(stb, hbFont, codepoints.ToArray(), RealFontStbFeatures, RealFontHbFeatures);
+            Assert.True(failure == null, $"{fontFile} / \"{text}\": {failure}");
+        }
+    }
+
+    [Theory]
+    [InlineData("GentiumPlus-Regular.ttf", 0x300, 0x2100)]
+    [InlineData("0xProto-Regular.ttf", 0x20, 0x2100)]
+    public void RealFontFuzz_MatchesHarfBuzz(string fontFile, int poolLow, int poolHigh)
+    {
+        var (stb, hbFont) = LoadBoth(fontFile);
+        using (hbFont)
+        {
+            var rng = new Random(0x0DDF00D);
+            var pool = new List<int>();
+            for (int cp = poolLow; cp <= poolHigh && pool.Count < 512; cp++)
+                if (stb.stbtt_FindGlyphIndex(cp) != 0) pool.Add(cp);
+            Assert.True(pool.Count > 100, "codepoint pool unexpectedly small");
+            var mismatches = new List<string>();
+            for (int i = 0; i < 200; i++)
+            {
+                int length = rng.Next(2, 9);
+                var raw = new System.Text.StringBuilder();
+                for (int k = 0; k < length; k++) raw.Append(char.ConvertFromUtf32(pool[rng.Next(pool.Count)]));
+                // NFC-normalize the fuzz input: HarfBuzz runs a Unicode normalization pre-pass (canonical mark
+                // reordering + de/re-composition) BEFORE GSUB; our engine does not (real text is NFC — the
+                // curated corpus is authored NFC for the same reason). Unnormalized combining sequences are
+                // recorded out of scope (plans/color_glyph_fonts.md §5.1). Normalization can mint codepoints
+                // outside the pool — skip the sequence when the font cannot map one (glyph 0 would then take
+                // HarfBuzz's separate .notdef normalization path).
+                string nfc = raw.ToString().Normalize(System.Text.NormalizationForm.FormC);
+                var seq = new List<int>();
+                foreach (System.Text.Rune rune in nfc.EnumerateRunes()) seq.Add(rune.Value);
+                if (seq.Exists(cp => stb.stbtt_FindGlyphIndex(cp) == 0)) continue;
+                var failure = CompareSequence(stb, hbFont, seq.ToArray(), RealFontStbFeatures, RealFontHbFeatures);
+                if (failure != null) mismatches.Add($"seq#{i} [{string.Join(" ", seq.ConvertAll(c => c.ToString("X")))}]: {failure}");
+            }
+            foreach (var m in mismatches.GetRange(0, Math.Min(mismatches.Count, 25)))
+                _output.WriteLine("  " + m);
+            Assert.True(mismatches.Count == 0, $"{fontFile}: {mismatches.Count}/200 real-font fuzz sequences mismatch HarfBuzz");
+        }
+    }
+
     /// <summary>Null = exact match; otherwise a human-readable diff of glyph ids / clusters.</summary>
     private static string? CompareSequence(FontInfo stb, HbFont hbFont, int[] codepoints)
+        => CompareSequence(stb, hbFont, codepoints, StbFeatures, PinnedFeatures);
+
+    private static string? CompareSequence(FontInfo stb, HbFont hbFont, int[] codepoints, OpenTypeFeatureTag[] stbFeatures, Feature[] hbFeatures)
     {
         // --- stb side: cmap-resolve each codepoint, then the ONE buffer applier ---
         var buffer = new GsubGlyphBuffer();
@@ -145,7 +289,7 @@ public class GsubSequenceOracleTests
         }
         var applier = stb.stbtt__GetGsubApplier();
         Assert.NotNull(applier);
-        var lookups = applier.ResolveLookups(StbFeatures, FontVariationNormalizedCoordinates.Default);
+        var lookups = applier.ResolveLookups(stbFeatures, FontVariationNormalizedCoordinates.Default);
         applier.Apply(lookups, buffer);
 
         // --- HarfBuzz side ---
@@ -154,7 +298,7 @@ public class GsubSequenceOracleTests
         hbBuffer.ClusterLevel = ClusterLevel.MonotoneCharacters;
         hbBuffer.AddUtf16(text);
         hbBuffer.GuessSegmentProperties();
-        hbFont.Shape(hbBuffer, PinnedFeatures);
+        hbFont.Shape(hbBuffer, hbFeatures);
         var infos = hbBuffer.GlyphInfos;
 
         if (infos.Length != buffer.Length)
@@ -167,7 +311,18 @@ public class GsubSequenceOracleTests
             if (!buffer.IsDefaultIgnorable[i] && infos[i].Codepoint != buffer.GlyphIds[i])
                 return $"glyph[{i}]: stb={buffer.GlyphIds[i]} hb={infos[i].Codepoint} (stb=[{FormatBuffer(buffer)}] hb=[{FormatHb(infos)}])";
             if (infos[i].Cluster != (uint)buffer.ClusterStart[i])
+            {
+                // Tolerated cluster deviation (recorded, 2026-09-04): HarfBuzz's Unicode normalization pass
+                // internally decomposes a precomposed base to canonically order a FOLLOWING combining mark and
+                // recomposes — identical glyph output, but the journey merges the mark's cluster into the base.
+                // We run no normalization, so the mark keeps its own (still monotone) cluster. Tolerate ONLY
+                // that shape: a NonSpacingMark position where HB merged BACKWARD.
+                int clusterStartChar = buffer.ClusterStart[i];
+                if (infos[i].Cluster < (uint)clusterStartChar && clusterStartChar < text.Length
+                    && System.Globalization.CharUnicodeInfo.GetUnicodeCategory(text, clusterStartChar) == System.Globalization.UnicodeCategory.NonSpacingMark)
+                    continue;
                 return $"cluster[{i}]: stb={buffer.ClusterStart[i]} hb={infos[i].Cluster} (stb=[{FormatBuffer(buffer)}] hb=[{FormatHb(infos)}])";
+            }
         }
         return null;
     }
