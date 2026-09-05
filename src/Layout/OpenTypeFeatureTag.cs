@@ -15,6 +15,9 @@ namespace StbTrueTypeSharp.Layout
 		public static readonly OpenTypeFeatureTag Liga = new OpenTypeFeatureTag('l', 'i', 'g', 'a');
 		public static readonly OpenTypeFeatureTag Rlig = new OpenTypeFeatureTag('r', 'l', 'i', 'g');
 		public static readonly OpenTypeFeatureTag Clig = new OpenTypeFeatureTag('c', 'l', 'i', 'g');
+		/// <summary>Contextual alternates — HarfBuzz/Chrome default-on; drives texture healing (0xProto/Monaspace)
+		/// and programming-ligature contexts.</summary>
+		public static readonly OpenTypeFeatureTag Calt = new OpenTypeFeatureTag('c', 'a', 'l', 't');
 		/// <summary>Required Variation Alternates (folded into the same pass — ONE GSUB applier in the tree).</summary>
 		public static readonly OpenTypeFeatureTag Rvrn = new OpenTypeFeatureTag('r', 'v', 'r', 'n');
 

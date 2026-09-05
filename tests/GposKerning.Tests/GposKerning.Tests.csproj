@@ -15,6 +15,14 @@
     <!-- M2 GSUB sequence oracle fixtures (plans/color_glyph_fonts.md §5.5): BOTH Noto emoji builds. OFL. -->
     <None Include="..\..\..\tests\graphical\_TestFonts\NotoColorEmoji.ttf" Link="NotoColorEmoji.ttf" CopyToOutputDirectory="PreserveNewest" />
     <None Include="..\..\..\tests\graphical\_TestFonts\NotoColorEmoji-Regular.ttf" Link="NotoColorEmoji-Regular.ttf" CopyToOutputDirectory="PreserveNewest" />
+    <!-- Real-font GSUB format coverage (probe: Scripts/probe_gsub_inventory.py). Gentium Plus (SIL OFL):
+         type 3 / 5 fmt 2+3 / 6 fmt 3, UseMarkFilteringSet + MarkAttachType via ccmp. 0xProto (OFL):
+         texture healing = calt type 6 fmt 1+3 -> nested type 1; UseMarkFilteringSet. -->
+    <None Include="..\..\..\tests\graphical\_TestFonts\GentiumPlus-Regular.ttf" Link="GentiumPlus-Regular.ttf" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\..\tests\graphical\_TestFonts\0xProto-Regular.ttf" Link="0xProto-Regular.ttf" CopyToOutputDirectory="PreserveNewest" />
+    <!-- Synthetic fixture for the ONE encoding no real corpus font carries: SequenceContext FORMAT 1.
+         Build command: python Scripts/build_gsub_type5fmt1_fixture.py (fontTools; script is the record). -->
+    <None Include="Fixtures\GsubType5Fmt1Fixture.ttf" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.12.0" />
