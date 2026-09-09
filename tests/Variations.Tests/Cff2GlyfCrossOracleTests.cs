@@ -50,6 +50,12 @@ namespace Variations.Tests
 			{
 				bool cff2HasBox = cff2.stbtt_GetGlyphBoxVar(glyph, cff2Coords, out int cx0, out int cy0, out int cx1, out int cy1);
 				bool glyfHasBox = glyf.stbtt_GetGlyphBoxVar(glyph, glyfCoords, out int gx0, out int gy0, out int gx1, out int gy1);
+				// A zero-area box carries no outline information and counts as EMPTY. At the DEFAULT position the two static
+				// paths disagree on what "empty" means: the glyf branch of stbtt_GetGlyphBox reports 1 for ANY present glyf entry
+				// (uni00A0 = composite of the empty `space`, header bbox 0,0,0,0) while the CFF branch reports 0 for an empty
+				// charstring. Neither is wrong for its own data; the varied path (outline bounds) already treats both as empty.
+				if (cff2HasBox && cx0 == cx1 && cy0 == cy1) cff2HasBox = false;
+				if (glyfHasBox && gx0 == gx1 && gy0 == gy1) glyfHasBox = false;
 				if (!cff2HasBox && !glyfHasBox) continue;
 				compared++;
 				if (cff2HasBox != glyfHasBox) { failures.Add($"glyph {glyph}: one side empty (cff2 {cff2HasBox}, glyf {glyfHasBox})"); continue; }
