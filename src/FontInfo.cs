@@ -17,7 +17,29 @@ namespace StbTrueTypeSharp
 		public int head;
 		public int hhea;
 		public int hmtx;
+		/// <summary>Absolute offset of the cmap subtable selected by <see cref="stbtt__InitFont_finish"/> (0 = none).</summary>
 		public int index_map;
+		/// <summary>What the selected cmap subtable is keyed by; <see cref="stbtt_FindGlyphIndex"/> translates Unicode to it.</summary>
+		public CmapSubtableKeyKind cmapSubtableKeyKind;
+
+		/// <summary>
+		/// Key space of the cmap subtable at <see cref="index_map"/> (plans/BUGFIX_cmap_subtable_selection_mac_platform.md §3.1).
+		/// </summary>
+		public enum CmapSubtableKeyKind : byte
+		{
+			/// <summary>(0,x) (2,x) (3,1) (3,10): the Unicode scalar is the key (identity).</summary>
+			Unicode = 0,
+			/// <summary>
+			/// (3,0) Microsoft Symbol: codes live at U+F020..U+F0FF. Lookup tries the scalar as given, then
+			/// <c>0xF000 | scalar</c> for scalars ≤ 0xFF.
+			/// </summary>
+			MicrosoftSymbol = 1,
+			/// <summary>
+			/// (1,0) Macintosh Roman: the key is the Mac OS Roman BYTE (<see cref="MacRomanEncoding"/>); codepoints with
+			/// no Mac Roman byte have no glyph.
+			/// </summary>
+			MacRoman = 2,
+		}
 		public int indexToLocFormat;
 		public int kern;
 		public int loca;
@@ -264,25 +286,26 @@ namespace StbTrueTypeSharp
 			this.svg = -1;
 			numTables = ttUSHORT(ptr + cmap + 2);
 			this.index_map = 0;
+			this.cmapSubtableKeyKind = CmapSubtableKeyKind.Unicode;
+			int bestRank = 0;
 			for (i = 0; i < numTables; ++i)
 			{
 				var encoding_record = (uint)(cmap + 4 + 8 * i);
-				switch (ttUSHORT(ptr + encoding_record))
-				{
-					case STBTT_PLATFORM_ID_MICROSOFT:
-						switch (ttUSHORT(ptr + encoding_record + 2))
-						{
-							case STBTT_MS_EID_UNICODE_BMP:
-							case STBTT_MS_EID_UNICODE_FULL:
-								this.index_map = (int)(cmap + ttULONG(ptr + encoding_record + 4));
-								break;
-						}
-
-						break;
-					case STBTT_PLATFORM_ID_UNICODE:
-						this.index_map = (int)(cmap + ttULONG(ptr + encoding_record + 4));
-						break;
-				}
+				if ((ptr + encoding_record).RemainingLength < 8)
+					break;
+				int platformId = ttUSHORT(ptr + encoding_record);
+				int encodingId = ttUSHORT(ptr + encoding_record + 2);
+				int rank = stbtt__RankCmapEncodingRecord(platformId, encodingId, out CmapSubtableKeyKind keyKind);
+				// Ties: first record wins — records are spec-sorted by (platformID, encodingID), so the lower
+				// encodingID is the one already held.
+				if (rank <= bestRank)
+					continue;
+				var subtableOffset = cmap + ttULONG(ptr + encoding_record + 4);
+				if (!stbtt__IsReadableCmapSubtable(ptr, subtableOffset))
+					continue;
+				bestRank = rank;
+				this.index_map = (int)subtableOffset;
+				this.cmapSubtableKeyKind = keyKind;
 			}
 
 			if (this.index_map == 0)
@@ -291,7 +314,109 @@ namespace StbTrueTypeSharp
 			return 1;
 		}
 
+		/// <summary>
+		/// Preference order for cmap encoding records (plans/BUGFIX_cmap_subtable_selection_mac_platform.md §3.6).
+		/// Higher wins; 0 = cannot be used as the primary subtable (CJK code pages, Mac non-Roman scripts, custom
+		/// platform, (0,5) UVS supplement — see plans/BUGFIX_cmap_remaining_gaps.md).
+		/// </summary>
+		private static int stbtt__RankCmapEncodingRecord(int platformId, int encodingId, out CmapSubtableKeyKind keyKind)
+		{
+			keyKind = CmapSubtableKeyKind.Unicode;
+			switch (platformId)
+			{
+				case STBTT_PLATFORM_ID_MICROSOFT:
+					switch (encodingId)
+					{
+						case STBTT_MS_EID_UNICODE_FULL: return 7;
+						case STBTT_MS_EID_UNICODE_BMP: return 5;
+						case STBTT_MS_EID_SYMBOL:
+							keyKind = CmapSubtableKeyKind.MicrosoftSymbol;
+							return 3;
+						default: return 0; // ShiftJIS / PRC / Big5 / Wansung / Johab
+					}
+				case STBTT_PLATFORM_ID_UNICODE:
+					switch (encodingId)
+					{
+						case STBTT_UNICODE_EID_UNICODE_2_0_FULL: return 6;
+						case STBTT_UNICODE_EID_UNICODE_FULL_FORMAT13: return 6;
+						case STBTT_UNICODE_EID_UNICODE_1_0:
+						case STBTT_UNICODE_EID_UNICODE_1_1:
+						case STBTT_UNICODE_EID_ISO_10646:
+						case STBTT_UNICODE_EID_UNICODE_2_0_BMP: return 4;
+						default: return 0; // (0,5) format 14 is a supplement, never the primary table
+					}
+				case STBTT_PLATFORM_ID_MAC:
+					if (encodingId != STBTT_MAC_EID_ROMAN)
+						return 0;
+					keyKind = CmapSubtableKeyKind.MacRoman;
+					return 2;
+				case STBTT_PLATFORM_ID_ISO:
+					// Deprecated platform; 7-bit ASCII, ISO 10646 and ISO 8859-1 are all Unicode prefixes → identity key.
+					return encodingId <= 2 ? 1 : 0;
+				default:
+					return 0;
+			}
+		}
+
+		/// <summary>
+		/// True when the subtable header is inside the file and its format has a reader in
+		/// <see cref="stbtt__LookupCmapSubtable"/> (0, 4, 6, 8, 10, 12, 13). Keeps a (0,4) format 14 or a format 2
+		/// record from out-ranking a readable one.
+		/// </summary>
+		private static bool stbtt__IsReadableCmapSubtable(FakePtr<byte> ptr, uint subtableOffset)
+		{
+			if ((ptr + subtableOffset).RemainingLength < 4)
+				return false;
+			switch (ttUSHORT(ptr + subtableOffset))
+			{
+				case 0:
+				case 4:
+				case 6:
+				case 8:
+				case 10:
+				case 12:
+				case 13:
+					return true;
+				default:
+					return false;
+			}
+		}
+
+		/// <summary>
+		/// Unicode scalar → glyph ID through the selected cmap subtable. The subtable chosen by
+		/// <see cref="stbtt__InitFont_finish"/> may be keyed by something other than Unicode
+		/// (<see cref="cmapSubtableKeyKind"/>); the key is translated here before the format readers run
+		/// (plans/BUGFIX_cmap_subtable_selection_mac_platform.md §3.2). 0 = no glyph.
+		/// </summary>
 		public int stbtt_FindGlyphIndex(int unicode_codepoint)
+		{
+			switch (this.cmapSubtableKeyKind)
+			{
+				case CmapSubtableKeyKind.MacRoman:
+				{
+					// (1,0) subtables are keyed by Mac OS Roman BYTES. ASCII is identity; 0x80+ goes through the table.
+					int macRomanByte = MacRomanEncoding.UnicodeToMacRomanByte(unicode_codepoint);
+					if (macRomanByte < 0)
+						return 0;
+					return stbtt__LookupCmapSubtable(macRomanByte);
+				}
+				case CmapSubtableKeyKind.MicrosoftSymbol:
+				{
+					// (3,0) symbol fonts encode 0x20..0xFF at U+F020..U+F0FF (OpenType "Non-Standard (Symbol) Fonts";
+					// what Windows and HarfBuzz do). Direct lookup first so U+F0xx itself also resolves; only the
+					// spec-sanctioned 0xF000 duplicate is tried, never F1xx/F2xx vendor ranges.
+					int direct = stbtt__LookupCmapSubtable(unicode_codepoint);
+					if (direct != 0 || (uint)unicode_codepoint > 0xFF)
+						return direct;
+					return stbtt__LookupCmapSubtable(0xF000 | unicode_codepoint);
+				}
+				default:
+					return stbtt__LookupCmapSubtable(unicode_codepoint);
+			}
+		}
+
+		/// <summary>Reads the selected cmap subtable with an already-translated key. Formats 0, 4, 6, 8, 10, 12, 13.</summary>
+		private int stbtt__LookupCmapSubtable(int unicode_codepoint)
 		{
 			var data = this.data;
 			var index_map = (uint)this.index_map;
@@ -356,9 +481,24 @@ namespace StbTrueTypeSharp
 				}
 			}
 
-			if (format == 12 || format == 13)
+			if (format == 10)
 			{
-				var ngroups = ttULONG(data + index_map + 12);
+				// Trimmed array, 32-bit (OpenType cmap "Format 10"): format 6 with u32 startCharCode @12, u32 numChars @16,
+				// u16 glyphIdArray[] @20. _EXTERNAL_APIS/OpenType/cmap.md.
+				var firstCharCode = ttULONG(data + index_map + 12);
+				var numChars = ttULONG(data + index_map + 16);
+				if ((uint)unicode_codepoint >= firstCharCode && (uint)unicode_codepoint - firstCharCode < numChars)
+					return ttUSHORT(data + index_map + 20 + ((uint)unicode_codepoint - firstCharCode) * 2);
+				return 0;
+			}
+
+			if (format == 12 || format == 13 || format == 8)
+			{
+				// Formats 12/13: u32 numGroups @12, groups @16. Format 8 (mixed 16/32, deprecated): u8 is32[8192] @12,
+				// u32 numGroups @8204, groups @8208 — same SequentialMapGroup record. The is32 bitmap only matters when
+				// tokenising a UTF-16 stream; we always have the full scalar value, so a group either covers it or not.
+				uint groupsBase = format == 8 ? index_map + 8208u : index_map + 16u;
+				var ngroups = ttULONG(data + (format == 8 ? index_map + 8204u : index_map + 12u));
 				var low = 0;
 				var high = 0;
 				low = 0;
@@ -366,8 +506,8 @@ namespace StbTrueTypeSharp
 				while (low < high)
 				{
 					var mid = low + ((high - low) >> 1);
-					var start_char = ttULONG(data + index_map + 16 + mid * 12);
-					var end_char = ttULONG(data + index_map + 16 + mid * 12 + 4);
+					var start_char = ttULONG(data + groupsBase + mid * 12);
+					var end_char = ttULONG(data + groupsBase + mid * 12 + 4);
 					if ((uint)unicode_codepoint < start_char)
 					{
 						high = mid;
@@ -378,8 +518,8 @@ namespace StbTrueTypeSharp
 					}
 					else
 					{
-						var start_glyph = ttULONG(data + index_map + 16 + mid * 12 + 8);
-						if (format == 12)
+						var start_glyph = ttULONG(data + groupsBase + mid * 12 + 8);
+						if (format != 13)
 							return (int)(start_glyph + unicode_codepoint - start_char);
 						return (int)start_glyph;
 					}

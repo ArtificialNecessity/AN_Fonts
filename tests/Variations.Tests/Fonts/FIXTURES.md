@@ -103,6 +103,41 @@ Every location is FULLY pinned (unspecified axes → fvar default) so the output
 needs STAT names the WPT subset lacks). Post-generation check performed: no variation
 tables remain, glyph order identical to the source VF, `Inter…default` glyf == source glyf.
 
+## cmap edge cases (2026-09-09) — `plans/BUGFIX_cmap_subtable_selection_mac_platform.md`
+
+Used by `CmapSubtableSelectionTests`. Not variation fixtures; they live here because this is the project that loads raw `Fonts/*.ttf`.
+
+| File | cmap encoding records | Role |
+|---|---|---|
+| `QuartzPdfSubset.Courier.maccmap-only.ttf` | **(1,0) format 6 only**, lang 0, firstCode 32, entryCount 90 | REAL producer bytes: `/FontFile2` of `AAAAAD+Courier` from a macOS 15.7.1 Quartz PDFContext export. 32 glyphs, UPM 2048, `Zapf` table present. 31 ASCII codes map to GIDs 1–31 (`0x20→1 , 0x2c→2 0x2d→3 0x2e→4 D G H N a b c d e f g h i k l m n o p r s t u v w x y`). Before the fix `stbtt_InitFont` returned 0 for it. |
+| `QuartzPdfSubset.AvenirNext-Bold.maccmap-only.ttf` | **(1,0) format 6 only** | Same producer, `AAAAAC+AvenirNext-Bold`. 37 glyphs, UPM 1000. Additionally maps **Mac Roman `0xDE` → GID 36** — `fi` (U+FB01), the proof the key space is Mac Roman bytes, not Unicode (`0xDE` in Unicode is `Þ`). |
+| `Synthetic.Inter.maccmap-only.ttf` | (1,0) format 6 only | OFL twin of the Quartz fixtures built from `Inter.no-var.subset.ttf`: ASCII identity for `a l n s t` + `0xDE → glyph00006` (GID 6). |
+| `Synthetic.Inter.uvs-plus-bmp.ttf` | **(0,5) format 14** + (3,1) format 4 | The format 14 record sorts FIRST and must be SKIPPED by the ranking (it is a UVS supplement, never a primary table); lookup must go through (3,1). No font under `SafeStbTrueTypeSharp/tests` carries (0,5) natively. |
+| `Synthetic.Inter.cmap-fmt10-only.ttf` | (3,10) **format 10** only | Trimmed 32-bit array reader (fontTools cannot write format 10 — hand-packed per `_EXTERNAL_APIS/OpenType/cmap.md`). |
+| `Synthetic.Inter.cmap-fmt8-only.ttf` | (3,10) **format 8** only | Deprecated mixed 16/32 reader: 8 KiB `is32` bitmap (all zero, BMP only) + 4 SequentialMapGroups. Hand-packed likewise. |
+| `generate_cmap_fixtures.py` | — | Generator for the four `Synthetic.*` files. Never run by the build. |
+
+All Synthetic fixtures keep Inter's `glyf`/`hmtx` untouched (7 glyphs: `.notdef a l n s t glyph00006`) and map exactly `a→1 l→2 n→3 s→4 t→5`.
+
+Real-font ranking oracles used by the same tests (records verified with fontTools, `Scripts/probe_cmap_records.py` in the Silky repo):
+
+| Font | Records | Must select |
+|---|---|---|
+| `../../GposKerning.Tests/Roboto-Regular.ttf` | (0,3) fmt4 · **(1,0) fmt6** · (3,1) fmt4 | (3,1) — Unicode beats Mac when both exist |
+| `Inter.no-var.subset.ttf`, `SourceSerif4Variable-Roman.ttf`, `NotoSansSymbols-VariableFont_wght.ttf` | (0,3) (0,4) (3,1) **(3,10)** | (3,10) fmt12 |
+| `Fraunces.instanced.default.ttf`, `AdobeVFPrototype.otf` | (0,3) (3,1) | (3,1) fmt4 |
+
+> **Licensing note (Quartz fixtures):** Courier and Avenir Next are Apple system fonts; these files are SUBSETS extracted
+> from a third-party PDF (`01-PleaseRead.pdf`) — the minimum bytes that reproduce the producer's exact output. Test-only,
+> never shipped, never rendered into a product. If that is ever uncomfortable, `Synthetic.Inter.maccmap-only.ttf` is the
+> OFL twin that covers the same code path; the Quartz files additionally catch the real producer's quirks (90-entry
+> format 6 with mostly-zero entries, `Zapf` table, 2048 UPM).
+
+```
+cd SafeStbTrueTypeSharp\tests\Variations.Tests\Fonts
+python generate_cmap_fixtures.py        # fontTools 4.60.0, Python 3.13 — regenerates the four Synthetic.* files
+```
+
 ## Licenses
 
 - **Inter** — SIL Open Font License 1.1 (© The Inter Project Authors, https://github.com/rsms/inter). Subset files taken verbatim from WPT (`w3c/web-platform-tests`, `css/css-fonts/variations/resources/`), itself BSD-3-Clause; the font remains OFL.
