@@ -22,5 +22,7 @@
     <None Update="Fonts\*.otf" CopyToOutputDirectory="PreserveNewest" />
     <None Update="Fonts\FIXTURES.md" CopyToOutputDirectory="Never" />
     <None Update="Fonts\generate_instanced_fixtures.py" CopyToOutputDirectory="Never" />
+    <!-- cmap edge-case fixtures (QuartzPdfSubset.*, Synthetic.Inter.*) ride the *.ttf glob above; generator is record-only. -->
+    <None Update="Fonts\generate_cmap_fixtures.py" CopyToOutputDirectory="Never" />
   </ItemGroup>
 </Project>

@@ -26,6 +26,8 @@ namespace StbTrueTypeSharp
 		public const int STBTT_UNICODE_EID_ISO_10646 = 2;
 		public const int STBTT_UNICODE_EID_UNICODE_2_0_BMP = 3;
 		public const int STBTT_UNICODE_EID_UNICODE_2_0_FULL = 4;
+		public const int STBTT_UNICODE_EID_VARIATION_SEQUENCES = 5; // format 14 supplement only
+		public const int STBTT_UNICODE_EID_UNICODE_FULL_FORMAT13 = 6; // full repertoire, format 13 (last-resort fonts)
 
 		public const int STBTT_MS_EID_SYMBOL = 0;
 		public const int STBTT_MS_EID_UNICODE_BMP = 1;
