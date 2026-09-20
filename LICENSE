@@ -8,6 +8,14 @@ repository are the property of David Jeske / Artificial Necessity and may not be
 used, copied, modified, merged, published, distributed, sublicensed, or sold
 without prior written permission from the copyright holder.
 
+Note on repository history: on 2026-09-19 the history of this repository was
+rewritten so that this LICENSE file is present in every Artificial Necessity
+commit (from the first AN commit onward; all upstream commits through 2f76ecb
+are untouched). Before the rewrite the repository carried no LICENSE file, and
+README.md / the .csproj in those commits still repeat the upstream "MIT / public
+domain" description; where they conflict with this file, this file governs. The
+repository was private throughout and no copies were distributed.
+
 
 ---------------------------------------------------------------------------
 Portions derived from SafeStbTrueTypeSharp and stb_truetype
