@@ -1,13 +1,23 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <Authors>SafeStbTrueTypeSharpTeam</Authors>
-    <Product>SafeStbTrueTypeSharp</Product>
+    <!-- Derived work: forked from SafeStbTrueTypeSharp (Roman Shapiro / rds1983, public domain),
+         itself a port of stb_truetype.h (Sean Barrett, MIT-or-public-domain). The Artificial
+         Necessity additions are separately copyrighted; see ../LICENSE for both notices. -->
+    <Authors>David Jeske, Roman Shapiro, Sean Barrett</Authors>
+    <Company>Artificial Necessity</Company>
+    <Product>ArtificialNecessity.Fonts</Product>
+    <Copyright>Portions Copyright (c) Roman Shapiro (public domain) and Sean Barrett (MIT / public domain). Additional portions Copyright © 2025-$([System.DateTime]::Now.Year) David Jeske / Artificial Necessity. All rights reserved.</Copyright>
+    <Description>ArtificialNecessity.Fonts — memory-safe C# font engine (TTF/OTF/CFF/CFF2, variable fonts, GPOS pair kerning, Y-only autofit raster). Heavily extended fork of SafeStbTrueTypeSharp / stb_truetype.</Description>
+    <PackageLicenseFile>LICENSE</PackageLicenseFile>
+    <PackageProjectUrl>https://github.com/ArtificialNecessity/AN_Fonts</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/ArtificialNecessity/AN_Fonts</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
     <TargetFrameworks>netstandard2.0;net9.0</TargetFrameworks>
-    <Description>Safe C# port of stb_truetype.h</Description>
-    <PackageLicense>https://wiki.creativecommons.org/wiki/public_domain</PackageLicense>
-    <PackageProjectUrl>https://github.com/jeske/SafeStbTrueTypeSharp</PackageProjectUrl>
     <RootNamespace>StbTrueTypeSharp</RootNamespace>
     <Version>1.24.1</Version>
     <LangVersion>latest</LangVersion>
   </PropertyGroup>
+  <ItemGroup>
+    <None Include="$(MSBuildThisFileDirectory)..\LICENSE" Pack="true" PackagePath="" Visible="false" />
+  </ItemGroup>
 </Project>

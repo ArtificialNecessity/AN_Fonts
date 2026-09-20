@@ -1,12 +1,20 @@
 # ArtificialNecessity.Fonts
 
+Copyright (c) 2025-2026 David Jeske / Artificial Necessity. All rights reserved.
+
 **A C# Memory-Safe Font Engine — TTF, OTF, CPU Glyph Raster + simplified Kerning, Glyph-Shaping, and Advance.**
 
-This library descends from [SafeStbTrueTypeSharp](https://github.com/rds1983/SafeStbTrueTypeSharp) (rds1983's fully-safe C# port of stb_truetype 1.24). It contains zero `unsafe` code — all font data access goes through bounds-checked `FakePtr<byte>` views over managed arrays.
+This library descends from [SafeStbTrueTypeSharp](https://github.com/StbSharp/SafeStbTrueTypeSharp) (Roman Shapiro / rds1983's fully-safe C# port of Sean Barrett's [stb_truetype](https://github.com/nothings/stb) 1.24). It contains zero `unsafe` code — all font data access goes through bounds-checked `FakePtr<byte>` views over managed arrays.
 
 ## License
 
-MIT / Public-Domain, following stb_truetype and SafeStbTrueTypeSharp upstream.
+This is a derived work with two sets of terms — see [LICENSE](LICENSE) for both notices:
+
+- **Upstream portions** (everything up to and including commit `2f76ecb`, 2020-03-07):
+  SafeStbTrueTypeSharp is public domain (Roman Shapiro); stb_truetype.h is MIT-or-public-domain
+  (Sean Barrett). Obtain the freely-licensed originals from the upstream repositories linked above.
+- **Artificial Necessity additions** (every commit after `2f76ecb` — the majority of the
+  code, everything in the table below): proprietary, all rights reserved.
 
 ## What we changed since the fork
 
